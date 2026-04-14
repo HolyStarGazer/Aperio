@@ -2,13 +2,21 @@ import datetime
 import sys
 import time
 
-from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt, QThread, pyqtSignal
+from PyQt6.QtCore import (
+    QAbstractTableModel,
+    QModelIndex,
+    QSortFilterProxyModel,
+    Qt,
+    QThread,
+    pyqtSignal,
+)
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QPushButton,
     QStackedWidget,
@@ -159,9 +167,71 @@ class PacketTableModel(QAbstractTableModel):
         self._packets.append(packet)
         self.endInsertRows()
 
+    def get_packet(self, row: int) -> dict:
+        return self._packets[row]
+
     @staticmethod
     def _format_time(ts: float) -> str:
         return datetime.datetime.fromtimestamp(ts).strftime("%H:%M:%S.%f")[:-3]
+
+
+class PacketFilterProxyModel(QSortFilterProxyModel):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._protocol_filter = ""
+        self._ip_filter = ""
+        self._port_filter: int | None = None
+
+    def set_protocol_filter(self, text: str) -> None:
+        self._protocol_filter = text.strip().upper()
+        self.invalidateFilter()
+
+    def set_ip_filter(self, text: str) -> None:
+        self._ip_filter = text.strip()
+        self.invalidateFilter()
+
+    def set_port_filter(self, text: str) -> None:
+        text = text.strip()
+        if not text:
+            self._port_filter = None
+        else:
+            try:
+                self._port_filter = int(text)
+            except ValueError:
+                self._port_filter = None
+        self.invalidateFilter()
+
+    def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex) -> bool:
+        model = self.sourceModel()
+        packet = model.get_packet(source_row)
+
+        if self._protocol_filter and self._protocol_filter not in packet["protocol"].upper():
+            return False
+
+        if self._ip_filter:
+            if self._ip_filter not in packet["src_ip"] and self._ip_filter not in packet["dst_ip"]:
+                return False
+
+        if self._port_filter is not None:
+            if packet["src_port"] != self._port_filter and packet["dst_port"] != self._port_filter:
+                return False
+
+        return True
+
+    def lessThan(self, left: QModelIndex, right: QModelIndex) -> bool:
+        model = self.sourceModel()
+        left_packet = model.get_packet(left.row())
+        right_packet = model.get_packet(right.row())
+        column = left.column()
+
+        if column == 0:
+            return left_packet["number"] < right_packet["number"]
+        if column == 1:
+            return left_packet["timestamp"] < right_packet["timestamp"]
+        if column == 5:
+            return left_packet["length"] < right_packet["length"]
+
+        return super().lessThan(left, right)
 
 
 class PacketsTab(QWidget):
@@ -170,12 +240,38 @@ class PacketsTab(QWidget):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(8)
 
         self.header = QLabel("Packets — 0 captured")
 
+        filter_bar = QHBoxLayout()
+        filter_bar.setSpacing(6)
+
+        self.protocol_filter = QLineEdit()
+        self.protocol_filter.setPlaceholderText("Protocol (TCP, UDP, ARP…)")
+        self.protocol_filter.setMaximumWidth(180)
+
+        self.ip_filter = QLineEdit()
+        self.ip_filter.setPlaceholderText("IP substring (src or dst)")
+        self.ip_filter.setMaximumWidth(220)
+
+        self.port_filter = QLineEdit()
+        self.port_filter.setPlaceholderText("Port")
+        self.port_filter.setMaximumWidth(80)
+
+        filter_bar.addWidget(QLabel("Filter:"))
+        filter_bar.addWidget(self.protocol_filter)
+        filter_bar.addWidget(self.ip_filter)
+        filter_bar.addWidget(self.port_filter)
+        filter_bar.addStretch()
+
         self.model = PacketTableModel()
+        self.proxy = PacketFilterProxyModel()
+        self.proxy.setSourceModel(self.model)
+
         self.view = QTableView()
-        self.view.setModel(self.model)
+        self.view.setModel(self.proxy)
+        self.view.setSortingEnabled(True)
         self.view.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.view.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.view.setAlternatingRowColors(True)
@@ -191,17 +287,30 @@ class PacketsTab(QWidget):
         self.view.setColumnWidth(4, 80)
         self.view.setColumnWidth(5, 70)
 
+        self.protocol_filter.textChanged.connect(self.proxy.set_protocol_filter)
+        self.ip_filter.textChanged.connect(self.proxy.set_ip_filter)
+        self.port_filter.textChanged.connect(self.proxy.set_port_filter)
+
         layout.addWidget(self.header)
+        layout.addLayout(filter_bar)
         layout.addWidget(self.view)
+
+    def _is_default_order(self) -> bool:
+        sort_column = self.proxy.sortColumn()
+        sort_order = self.proxy.sortOrder()
+        if sort_column == -1:
+            return True
+        return sort_column == 0 and sort_order == Qt.SortOrder.AscendingOrder
 
     def on_packet_received(self, packet: dict):
         scrollbar = self.view.verticalScrollBar()
         at_bottom = scrollbar.value() >= scrollbar.maximum() - 2
+        default_order = self._is_default_order()
 
-        self.model.append_packet(packet, allow_eviction=at_bottom)
+        self.model.append_packet(packet, allow_eviction=at_bottom and default_order)
         self.header.setText(f"Packets — {packet['number']} captured")
 
-        if at_bottom:
+        if at_bottom and default_order:
             self.view.scrollToBottom()
 
 
