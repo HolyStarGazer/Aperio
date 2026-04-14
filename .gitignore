@@ -16,6 +16,7 @@ env/
 ENV/
 
 # IDE / editor
+CLAUDE.md
 .claude/
 .vscode/
 .idea/
