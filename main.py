@@ -147,10 +147,11 @@ class PacketTableModel(QAbstractTableModel):
             return self.COLUMNS[section]
         return None
 
-    def append_packet(self, packet: dict):
-        if len(self._packets) >= MAX_PACKETS:
-            self.beginRemoveRows(QModelIndex(), 0, 0)
-            self._packets.pop(0)
+    def append_packet(self, packet: dict, allow_eviction: bool = True) -> None:
+        if allow_eviction and len(self._packets) >= MAX_PACKETS:
+            excess = len(self._packets) - MAX_PACKETS + 1
+            self.beginRemoveRows(QModelIndex(), 0, excess - 1)
+            del self._packets[:excess]
             self.endRemoveRows()
 
         row = len(self._packets)
@@ -197,7 +198,7 @@ class PacketsTab(QWidget):
         scrollbar = self.view.verticalScrollBar()
         at_bottom = scrollbar.value() >= scrollbar.maximum() - 2
 
-        self.model.append_packet(packet)
+        self.model.append_packet(packet, allow_eviction=at_bottom)
         self.header.setText(f"Packets — {packet['number']} captured")
 
         if at_bottom:
