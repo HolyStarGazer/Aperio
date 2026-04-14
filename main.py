@@ -13,31 +13,81 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from scapy.all import ARP, IP, TCP, UDP, AsyncSniffer
 
 TAB_NAMES = ["Dashboard", "Devices", "Topology", "Packets", "Scan"]
+CAPTURE_INTERFACE = "Ethernet"
+
+
+def decode_packet(pkt, number: int) -> dict:
+    result = {
+        "number": number,
+        "timestamp": time.time(),
+        "src_ip": "",
+        "dst_ip": "",
+        "src_port": None,
+        "dst_port": None,
+        "protocol": "Other",
+        "info": pkt.summary(),
+        "length": len(pkt),
+    }
+
+    if pkt.haslayer(ARP):
+        arp = pkt[ARP]
+        result["protocol"] = "ARP"
+        result["src_ip"] = arp.psrc
+        result["dst_ip"] = arp.pdst
+        op = "request" if arp.op == 1 else "reply"
+        result["info"] = f"ARP {op}  who-has {arp.pdst} tell {arp.psrc}"
+        return result
+
+    if pkt.haslayer(IP):
+        ip = pkt[IP]
+        result["src_ip"] = ip.src
+        result["dst_ip"] = ip.dst
+
+        if pkt.haslayer(TCP):
+            tcp = pkt[TCP]
+            result["protocol"] = "TCP"
+            result["src_port"] = int(tcp.sport)
+            result["dst_port"] = int(tcp.dport)
+            result["info"] = f"{tcp.sport} → {tcp.dport}  flags={tcp.flags}"
+        elif pkt.haslayer(UDP):
+            udp = pkt[UDP]
+            result["protocol"] = "UDP"
+            result["src_port"] = int(udp.sport)
+            result["dst_port"] = int(udp.dport)
+            result["info"] = f"{udp.sport} → {udp.dport}"
+        else:
+            result["protocol"] = f"IP/{ip.proto}"
+
+    return result
 
 
 class CaptureThread(QThread):
     packet_captured = pyqtSignal(dict)
 
-    def __init__(self, parent=None):
+    def __init__(self, iface: str, parent=None):
         super().__init__(parent)
+        self._iface = iface
         self._running = True
         self._counter = 0
 
     def run(self):
+        sniffer = AsyncSniffer(
+            iface=self._iface,
+            prn=self._handle_packet,
+            store=False,
+        )
+        sniffer.start()
         while self._running:
-            self._counter += 1
-            fake_packet = {
-                "number": self._counter,
-                "timestamp": time.time(),
-                "src_ip": "192.168.86.72",
-                "dst_ip": "192.168.86.1",
-                "protocol": "TCP",
-                "info": f"fake packet #{self._counter}",
-            }
-            self.packet_captured.emit(fake_packet)
-            self.msleep(1000)
+            self.msleep(100)
+        sniffer.stop()
+
+    def _handle_packet(self, pkt):
+        self._counter += 1
+        decoded = decode_packet(pkt, self._counter)
+        self.packet_captured.emit(decoded)
 
     def stop(self):
         self._running = False
@@ -58,7 +108,12 @@ class PacketsTab(QWidget):
         layout.addWidget(self.list)
 
     def on_packet_received(self, packet: dict):
-        row = f"#{packet['number']}  {packet['protocol']}  {packet['src_ip']} → {packet['dst_ip']}  |  {packet['info']}"
+        row = (
+            f"#{packet['number']:<5} "
+            f"{packet['protocol']:<8} "
+            f"{packet['src_ip']:<18} → {packet['dst_ip']:<18} "
+            f"| {packet['info']}"
+        )
         self.list.addItem(row)
         self.header.setText(f"Packets — {packet['number']} captured")
 
@@ -68,7 +123,7 @@ class MainWindow(QMainWindow):
         super().__init__()
 
         self.setWindowTitle("Aperio")
-        self.resize(1000, 700)
+        self.resize(1100, 700)
 
         self.packets_tab = PacketsTab()
 
@@ -103,7 +158,7 @@ class MainWindow(QMainWindow):
 
         self.setCentralWidget(root)
 
-        self.capture_thread = CaptureThread(self)
+        self.capture_thread = CaptureThread(CAPTURE_INTERFACE, self)
         self.capture_thread.packet_captured.connect(self.packets_tab.on_packet_received)
         self.capture_thread.start()
 
