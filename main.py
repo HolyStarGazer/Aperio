@@ -1,15 +1,18 @@
+import datetime
 import sys
 import time
 
-from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt, QThread, pyqtSignal
 from PyQt6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
-    QListWidget,
     QMainWindow,
     QPushButton,
     QStackedWidget,
+    QTableView,
     QVBoxLayout,
     QWidget,
 )
@@ -17,6 +20,7 @@ from scapy.all import ARP, IP, TCP, UDP, AsyncSniffer
 
 TAB_NAMES = ["Dashboard", "Devices", "Topology", "Packets", "Scan"]
 CAPTURE_INTERFACE = "Ethernet"
+MAX_PACKETS = 10_000
 
 
 def decode_packet(pkt, number: int) -> dict:
@@ -94,6 +98,71 @@ class CaptureThread(QThread):
         self.wait()
 
 
+class PacketTableModel(QAbstractTableModel):
+    COLUMNS = ["#", "Time", "Source", "Destination", "Protocol", "Length", "Info"]
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._packets: list[dict] = []
+
+    def rowCount(self, parent=QModelIndex()):
+        if parent.isValid():
+            return 0
+        return len(self._packets)
+
+    def columnCount(self, parent=QModelIndex()):
+        if parent.isValid():
+            return 0
+        return len(self.COLUMNS)
+
+    def data(self, index, role=Qt.ItemDataRole.DisplayRole):
+        if not index.isValid():
+            return None
+        if role != Qt.ItemDataRole.DisplayRole:
+            return None
+
+        packet = self._packets[index.row()]
+        column = index.column()
+
+        if column == 0:
+            return str(packet["number"])
+        if column == 1:
+            return self._format_time(packet["timestamp"])
+        if column == 2:
+            return packet["src_ip"]
+        if column == 3:
+            return packet["dst_ip"]
+        if column == 4:
+            return packet["protocol"]
+        if column == 5:
+            return str(packet["length"])
+        if column == 6:
+            return packet["info"]
+        return None
+
+    def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
+        if role != Qt.ItemDataRole.DisplayRole:
+            return None
+        if orientation == Qt.Orientation.Horizontal:
+            return self.COLUMNS[section]
+        return None
+
+    def append_packet(self, packet: dict):
+        if len(self._packets) >= MAX_PACKETS:
+            self.beginRemoveRows(QModelIndex(), 0, 0)
+            self._packets.pop(0)
+            self.endRemoveRows()
+
+        row = len(self._packets)
+        self.beginInsertRows(QModelIndex(), row, row)
+        self._packets.append(packet)
+        self.endInsertRows()
+
+    @staticmethod
+    def _format_time(ts: float) -> str:
+        return datetime.datetime.fromtimestamp(ts).strftime("%H:%M:%S.%f")[:-3]
+
+
 class PacketsTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -102,20 +171,37 @@ class PacketsTab(QWidget):
         layout.setContentsMargins(12, 12, 12, 12)
 
         self.header = QLabel("Packets — 0 captured")
-        self.list = QListWidget()
+
+        self.model = PacketTableModel()
+        self.view = QTableView()
+        self.view.setModel(self.model)
+        self.view.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.view.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.view.setAlternatingRowColors(True)
+        self.view.verticalHeader().setVisible(False)
+
+        header = self.view.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(6, QHeaderView.ResizeMode.Stretch)
+        self.view.setColumnWidth(0, 60)
+        self.view.setColumnWidth(1, 110)
+        self.view.setColumnWidth(2, 150)
+        self.view.setColumnWidth(3, 150)
+        self.view.setColumnWidth(4, 80)
+        self.view.setColumnWidth(5, 70)
 
         layout.addWidget(self.header)
-        layout.addWidget(self.list)
+        layout.addWidget(self.view)
 
     def on_packet_received(self, packet: dict):
-        row = (
-            f"#{packet['number']:<5} "
-            f"{packet['protocol']:<8} "
-            f"{packet['src_ip']:<18} → {packet['dst_ip']:<18} "
-            f"| {packet['info']}"
-        )
-        self.list.addItem(row)
+        scrollbar = self.view.verticalScrollBar()
+        at_bottom = scrollbar.value() >= scrollbar.maximum() - 2
+
+        self.model.append_packet(packet)
         self.header.setText(f"Packets — {packet['number']} captured")
+
+        if at_bottom:
+            self.view.scrollToBottom()
 
 
 class MainWindow(QMainWindow):
