@@ -13,27 +13,38 @@ from PyQt6.QtCore import (
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
+    QComboBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
     QLineEdit,
     QMainWindow,
     QPushButton,
+    QSpinBox,
     QStackedWidget,
     QTableView,
     QVBoxLayout,
     QWidget,
 )
-from scapy.all import ARP, IP, TCP, UDP, AsyncSniffer
+from scapy.all import ARP, IP, TCP, UDP, AsyncSniffer, conf
 
 TAB_NAMES = ["Dashboard", "Devices", "Topology", "Packets", "Scan"]
-CAPTURE_INTERFACE = "Ethernet"
+DEFAULT_INTERFACE = "Ethernet"
 MAX_PACKETS = 10_000
 
 
-def decode_packet(pkt, number: int) -> dict:
+def list_interfaces() -> list[str]:
+    try:
+        names = {iface.name for iface in conf.ifaces.values() if iface.name}
+        if not names:
+            return [DEFAULT_INTERFACE]
+        return sorted(names, key=lambda n: (n != DEFAULT_INTERFACE, n.lower()))
+    except Exception:
+        return [DEFAULT_INTERFACE]
+
+
+def decode_packet(pkt) -> dict:
     result = {
-        "number": number,
         "timestamp": time.time(),
         "src_ip": "",
         "dst_ip": "",
@@ -78,12 +89,14 @@ def decode_packet(pkt, number: int) -> dict:
 
 class CaptureThread(QThread):
     packet_captured = pyqtSignal(dict)
+    capture_finished = pyqtSignal()
 
-    def __init__(self, iface: str, parent=None):
+    def __init__(self, iface: str, target: int | None = None, parent=None):
         super().__init__(parent)
         self._iface = iface
+        self._target = target
         self._running = True
-        self._counter = 0
+        self._count = 0
 
     def run(self):
         sniffer = AsyncSniffer(
@@ -94,11 +107,16 @@ class CaptureThread(QThread):
         sniffer.start()
         while self._running:
             self.msleep(100)
+            if self._target is not None and self._count >= self._target:
+                break
         sniffer.stop()
+        self.capture_finished.emit()
 
     def _handle_packet(self, pkt):
-        self._counter += 1
-        decoded = decode_packet(pkt, self._counter)
+        if self._target is not None and self._count >= self._target:
+            return
+        self._count += 1
+        decoded = decode_packet(pkt)
         self.packet_captured.emit(decoded)
 
     def stop(self):
@@ -112,6 +130,7 @@ class PacketTableModel(QAbstractTableModel):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._packets: list[dict] = []
+        self._next_number = 0
 
     def rowCount(self, parent=QModelIndex()):
         if parent.isValid():
@@ -156,6 +175,9 @@ class PacketTableModel(QAbstractTableModel):
         return None
 
     def append_packet(self, packet: dict, allow_eviction: bool = True) -> None:
+        self._next_number += 1
+        packet["number"] = self._next_number
+
         if allow_eviction and len(self._packets) >= MAX_PACKETS:
             excess = len(self._packets) - MAX_PACKETS + 1
             self.beginRemoveRows(QModelIndex(), 0, excess - 1)
@@ -166,6 +188,12 @@ class PacketTableModel(QAbstractTableModel):
         self.beginInsertRows(QModelIndex(), row, row)
         self._packets.append(packet)
         self.endInsertRows()
+
+    def clear(self) -> None:
+        self.beginResetModel()
+        self._packets.clear()
+        self._next_number = 0
+        self.endResetModel()
 
     def get_packet(self, row: int) -> dict:
         return self._packets[row]
@@ -259,11 +287,14 @@ class PacketsTab(QWidget):
         self.port_filter.setPlaceholderText("Port")
         self.port_filter.setMaximumWidth(80)
 
+        self.clear_button = QPushButton("Clear")
+
         filter_bar.addWidget(QLabel("Filter:"))
         filter_bar.addWidget(self.protocol_filter)
         filter_bar.addWidget(self.ip_filter)
         filter_bar.addWidget(self.port_filter)
         filter_bar.addStretch()
+        filter_bar.addWidget(self.clear_button)
 
         self.model = PacketTableModel()
         self.proxy = PacketFilterProxyModel()
@@ -290,10 +321,15 @@ class PacketsTab(QWidget):
         self.protocol_filter.textChanged.connect(self.proxy.set_protocol_filter)
         self.ip_filter.textChanged.connect(self.proxy.set_ip_filter)
         self.port_filter.textChanged.connect(self.proxy.set_port_filter)
+        self.clear_button.clicked.connect(self._on_clear)
 
         layout.addWidget(self.header)
         layout.addLayout(filter_bar)
         layout.addWidget(self.view)
+
+    def _on_clear(self) -> None:
+        self.model.clear()
+        self.header.setText("Packets — 0 captured")
 
     def _is_default_order(self) -> bool:
         sort_column = self.proxy.sortColumn()
@@ -302,16 +338,108 @@ class PacketsTab(QWidget):
             return True
         return sort_column == 0 and sort_order == Qt.SortOrder.AscendingOrder
 
-    def on_packet_received(self, packet: dict):
+    def on_packet_received(self, packet: dict) -> None:
         scrollbar = self.view.verticalScrollBar()
         at_bottom = scrollbar.value() >= scrollbar.maximum() - 2
         default_order = self._is_default_order()
 
         self.model.append_packet(packet, allow_eviction=at_bottom and default_order)
-        self.header.setText(f"Packets — {packet['number']} captured")
+        self.header.setText(f"Packets — {self.model._next_number} captured")
 
         if at_bottom and default_order:
             self.view.scrollToBottom()
+
+
+class ScanTab(QWidget):
+    start_live_requested = pyqtSignal(str)
+    start_scan_requested = pyqtSignal(str, int)
+    stop_requested = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(12)
+
+        title = QLabel("Capture")
+        title_font = title.font()
+        title_font.setPointSize(title_font.pointSize() + 4)
+        title_font.setBold(True)
+        title.setFont(title_font)
+
+        iface_row = QHBoxLayout()
+        iface_row.addWidget(QLabel("Interface:"))
+        self.iface_combo = QComboBox()
+        for name in list_interfaces():
+            self.iface_combo.addItem(name)
+        default_index = self.iface_combo.findText(DEFAULT_INTERFACE)
+        if default_index >= 0:
+            self.iface_combo.setCurrentIndex(default_index)
+        self.iface_combo.setMinimumWidth(280)
+        iface_row.addWidget(self.iface_combo)
+        iface_row.addStretch()
+
+        self.live_button = QPushButton("Start Live Capture")
+        self.live_button.setMinimumWidth(200)
+
+        live_row = QHBoxLayout()
+        live_row.addWidget(self.live_button)
+        live_row.addStretch()
+
+        self.scan_button = QPushButton("Capture N Packets")
+        self.scan_button.setMinimumWidth(200)
+        self.count_spin = QSpinBox()
+        self.count_spin.setRange(1, 1_000_000)
+        self.count_spin.setValue(100)
+        self.count_spin.setMaximumWidth(120)
+
+        scan_row = QHBoxLayout()
+        scan_row.addWidget(self.scan_button)
+        scan_row.addWidget(QLabel("count:"))
+        scan_row.addWidget(self.count_spin)
+        scan_row.addStretch()
+
+        self.stop_button = QPushButton("Stop")
+        self.stop_button.setMinimumWidth(200)
+        self.stop_button.setEnabled(False)
+
+        stop_row = QHBoxLayout()
+        stop_row.addWidget(self.stop_button)
+        stop_row.addStretch()
+
+        self.status_label = QLabel("Status: Idle")
+
+        layout.addWidget(title)
+        layout.addLayout(iface_row)
+        layout.addLayout(live_row)
+        layout.addLayout(scan_row)
+        layout.addLayout(stop_row)
+        layout.addWidget(self.status_label)
+        layout.addStretch()
+
+        self.live_button.clicked.connect(self._on_live_clicked)
+        self.scan_button.clicked.connect(self._on_scan_clicked)
+        self.stop_button.clicked.connect(self.stop_requested.emit)
+
+    def _on_live_clicked(self) -> None:
+        self.start_live_requested.emit(self.iface_combo.currentText())
+
+    def _on_scan_clicked(self) -> None:
+        self.start_scan_requested.emit(
+            self.iface_combo.currentText(),
+            self.count_spin.value(),
+        )
+
+    def set_capturing(self, capturing: bool) -> None:
+        self.live_button.setEnabled(not capturing)
+        self.scan_button.setEnabled(not capturing)
+        self.count_spin.setEnabled(not capturing)
+        self.iface_combo.setEnabled(not capturing)
+        self.stop_button.setEnabled(capturing)
+
+    def set_status(self, text: str) -> None:
+        self.status_label.setText(f"Status: {text}")
 
 
 class MainWindow(QMainWindow):
@@ -322,11 +450,15 @@ class MainWindow(QMainWindow):
         self.resize(1100, 700)
 
         self.packets_tab = PacketsTab()
+        self.scan_tab = ScanTab()
+        self.capture_thread: CaptureThread | None = None
 
         self.content = QStackedWidget()
         for name in TAB_NAMES:
             if name == "Packets":
                 self.content.addWidget(self.packets_tab)
+            elif name == "Scan":
+                self.content.addWidget(self.scan_tab)
             else:
                 placeholder = QLabel(f"{name} (placeholder)")
                 placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -354,12 +486,46 @@ class MainWindow(QMainWindow):
 
         self.setCentralWidget(root)
 
-        self.capture_thread = CaptureThread(CAPTURE_INTERFACE, self)
+        self.scan_tab.start_live_requested.connect(self._start_live)
+        self.scan_tab.start_scan_requested.connect(self._start_scan)
+        self.scan_tab.stop_requested.connect(self._stop_capture)
+
+    def _start_live(self, iface: str) -> None:
+        if self._start_capture(iface, target=None):
+            self.scan_tab.set_status(f"Capturing live on {iface}")
+
+    def _start_scan(self, iface: str, count: int) -> None:
+        if self._start_capture(iface, target=count):
+            self.scan_tab.set_status(f"Capturing {count} packets on {iface}")
+
+    def _start_capture(self, iface: str, target: int | None) -> bool:
+        if self.capture_thread is not None:
+            return False
+        self.capture_thread = CaptureThread(iface, target, self)
         self.capture_thread.packet_captured.connect(self.packets_tab.on_packet_received)
+        self.capture_thread.capture_finished.connect(self._on_capture_finished)
         self.capture_thread.start()
+        self.scan_tab.set_capturing(True)
+        return True
+
+    def _stop_capture(self) -> None:
+        if self.capture_thread is None:
+            return
+        self.capture_thread.stop()
+        self.capture_thread = None
+        self.scan_tab.set_capturing(False)
+        self.scan_tab.set_status("Stopped")
+
+    def _on_capture_finished(self) -> None:
+        if self.capture_thread is None:
+            return
+        self.capture_thread = None
+        self.scan_tab.set_capturing(False)
+        self.scan_tab.set_status("Finished")
 
     def closeEvent(self, event):
-        self.capture_thread.stop()
+        if self.capture_thread is not None:
+            self.capture_thread.stop()
         super().closeEvent(event)
 
 
