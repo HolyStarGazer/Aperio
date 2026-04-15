@@ -79,6 +79,8 @@ class ScanTab(QWidget):
     stop_requested = pyqtSignal()
     load_requested = pyqtSignal(str)
     arp_scan_requested = pyqtSignal(str, str)
+    retry_hostnames_requested = pyqtSignal()
+    clear_hostnames_requested = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -209,6 +211,24 @@ class ScanTab(QWidget):
         arp_row.addWidget(self.arp_progress)
         arp_row.addStretch()
 
+        self.retry_hostnames_button = QPushButton("Retry Unresolved Hostnames")
+        self.retry_hostnames_button.setMinimumWidth(220)
+        self.clear_hostnames_button = QPushButton("Clear Hostname Cache")
+        self.clear_hostnames_button.setMinimumWidth(200)
+
+        self.hostname_progress = QProgressBar()
+        self.hostname_progress.setMinimumWidth(220)
+        self.hostname_progress.setMaximumWidth(280)
+        self.hostname_progress.setTextVisible(True)
+        self.hostname_progress.setFormat("%v / %m resolved")
+        self.hostname_progress.setVisible(False)
+
+        hostnames_row = QHBoxLayout()
+        hostnames_row.addWidget(self.retry_hostnames_button)
+        hostnames_row.addWidget(self.clear_hostnames_button)
+        hostnames_row.addWidget(self.hostname_progress)
+        hostnames_row.addStretch()
+
         recent_title = QLabel("Recent captures")
         recent_title.setFont(self._section_font())
 
@@ -246,6 +266,7 @@ class ScanTab(QWidget):
         layout.addSpacing(8)
         layout.addWidget(discovery_title)
         layout.addLayout(arp_row)
+        layout.addLayout(hostnames_row)
         layout.addSpacing(12)
         layout.addWidget(self.status_label)
         layout.addSpacing(12)
@@ -261,6 +282,8 @@ class ScanTab(QWidget):
         self.stop_button.clicked.connect(self.stop_requested.emit)
         self.load_button.clicked.connect(self._on_load_clicked)
         self.arp_scan_button.clicked.connect(self._on_arp_scan_clicked)
+        self.retry_hostnames_button.clicked.connect(self.retry_hostnames_requested.emit)
+        self.clear_hostnames_button.clicked.connect(self.clear_hostnames_requested.emit)
 
         self.refresh_recent_captures()
 
@@ -341,6 +364,24 @@ class ScanTab(QWidget):
             return
         self.arp_progress.setMaximum(total)
         self.arp_progress.setValue(scanned)
+
+    def set_hostname_resolving(self, active: bool, total: int = 0) -> None:
+        if active:
+            self.hostname_progress.setMaximum(max(total, 1))
+            self.hostname_progress.setValue(0)
+            self.hostname_progress.setVisible(True)
+            self.retry_hostnames_button.setEnabled(False)
+            self.clear_hostnames_button.setEnabled(False)
+        else:
+            self.hostname_progress.setVisible(False)
+            self.retry_hostnames_button.setEnabled(True)
+            self.clear_hostnames_button.setEnabled(True)
+
+    def set_hostname_progress(self, done: int, total: int) -> None:
+        if total <= 0:
+            return
+        self.hostname_progress.setMaximum(total)
+        self.hostname_progress.setValue(done)
 
     def _update_enabled(self) -> None:
         active = self._capturing or self._loading or self._arp_scanning

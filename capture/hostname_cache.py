@@ -61,3 +61,18 @@ class HostnameCache:
 
     def all_entries(self) -> dict[str, str]:
         return dict(self._entries)
+
+    def purge_unresolved(self) -> list[str]:
+        removed = [ip for ip, name in self._entries.items() if name == ip]
+        for ip in removed:
+            del self._entries[ip]
+        if removed:
+            self._dirty = True
+        return removed
+
+    def clear(self) -> list[str]:
+        removed = list(self._entries.keys())
+        self._entries.clear()
+        if removed:
+            self._dirty = True
+        return removed

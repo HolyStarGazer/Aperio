@@ -8,7 +8,8 @@ from PyQt6.QtCore import QThread, pyqtSignal
 from scapy.all import ARP, AsyncSniffer, Ether, PcapReader, PcapWriter, srp
 
 from capture.decoder import decode_packet, packet_matches_filter
-from capture.files import CAPTURES_DIR, RECENT_CAPTURES_LIMIT
+from capture.files import CAPTURES_DIR, RECENT_CAPTURES_LIMIT, is_private_ip
+from capture.nbns import query_nbns_hostname
 
 
 class CaptureThread(QThread):
@@ -241,7 +242,19 @@ class HostnameResolverThread(QThread):
             try:
                 hostname, _, _ = socket.gethostbyaddr(ip)
             except (socket.herror, socket.gaierror, OSError):
+                hostname = ""
+
+            if not hostname and is_private_ip(ip):
+                try:
+                    nbns_name = query_nbns_hostname(ip, timeout=1.5)
+                except Exception:
+                    nbns_name = ""
+                if nbns_name:
+                    hostname = nbns_name
+
+            if not hostname:
                 hostname = ip
+
             self.hostname_resolved.emit(ip, hostname)
 
     def stop(self) -> None:

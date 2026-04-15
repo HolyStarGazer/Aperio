@@ -65,6 +65,10 @@ class MainWindow(QMainWindow):
         self.loader_thread: PcapLoaderThread | None = None
         self.arp_scanner: ArpScannerThread | None = None
 
+        self._hostname_pending: set[str] = set()
+        self._hostname_total: int = 0
+        self._hostname_success: int = 0
+
         self.packets_tab.resolver.hostname_resolved.connect(self._on_hostname_resolved)
 
         self.content = QStackedWidget()
@@ -131,6 +135,8 @@ class MainWindow(QMainWindow):
         self.scan_tab.stop_requested.connect(self._stop_capture)
         self.scan_tab.load_requested.connect(self._on_load_requested)
         self.scan_tab.arp_scan_requested.connect(self._on_arp_scan_requested)
+        self.scan_tab.retry_hostnames_requested.connect(self._on_retry_hostnames)
+        self.scan_tab.clear_hostnames_requested.connect(self._on_clear_hostnames)
         self.devices_tab.view_packets_requested.connect(self._on_view_packets_for_device)
         self.dashboard_tab.view_packets_requested.connect(self._on_view_packets_for_device)
         self.topology_tab.view_packets_requested.connect(self._on_view_packets_for_device)
@@ -192,6 +198,57 @@ class MainWindow(QMainWindow):
         self.hostname_cache.apply(ip, hostname)
         self.packets_tab.model.apply_hostname(ip, hostname)
         self.device_registry.apply_hostname(ip, hostname)
+
+        if ip in self._hostname_pending:
+            self._hostname_pending.discard(ip)
+            if hostname and hostname != ip:
+                self._hostname_success += 1
+            done = self._hostname_total - len(self._hostname_pending)
+            self.scan_tab.set_hostname_progress(done, self._hostname_total)
+            if not self._hostname_pending:
+                self._finalize_hostname_batch()
+
+    def _start_hostname_batch(self, ips: list[str]) -> None:
+        self._hostname_pending = set(ips)
+        self._hostname_total = len(ips)
+        self._hostname_success = 0
+        self.scan_tab.set_hostname_resolving(True, total=self._hostname_total)
+        for ip in ips:
+            self.packets_tab.resolver.enqueue(ip)
+
+    def _finalize_hostname_batch(self) -> None:
+        total = self._hostname_total
+        success = self._hostname_success
+        self.scan_tab.set_hostname_resolving(False)
+        self.scan_tab.set_status(
+            f"Hostname resolution finished — {success}/{total} resolved"
+        )
+        self._hostname_total = 0
+        self._hostname_success = 0
+
+    def _on_retry_hostnames(self) -> None:
+        removed = self.hostname_cache.purge_unresolved()
+        if not removed:
+            self.scan_tab.set_status("No unresolved hostnames to retry")
+            return
+        self.device_registry.reset_hostnames(removed)
+        self.scan_tab.set_status(f"Retrying {len(removed)} unresolved hostname(s)…")
+        self._start_hostname_batch(removed)
+
+    def _on_clear_hostnames(self) -> None:
+        from capture.files import is_private_ip
+
+        removed = self.hostname_cache.clear()
+        self.device_registry.reset_hostnames()
+        targets = [
+            d.ip for d in self.device_registry.all_devices()
+            if d.ip and is_private_ip(d.ip)
+        ]
+        self.scan_tab.set_status(
+            f"Cleared {len(removed)} cache entries, re-resolving {len(targets)} local host(s)…"
+        )
+        if targets:
+            self._start_hostname_batch(targets)
 
     def _on_view_packets_for_device(self, ip: str) -> None:
         self.packets_tab.set_ip_filter(ip)

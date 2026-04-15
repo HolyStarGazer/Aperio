@@ -183,6 +183,17 @@ class DeviceRegistryModel(QObject):
                 device.device_type = self._classify(device)
                 self.device_changed.emit(device.key)
 
+    def reset_hostnames(self, ips: list[str] | None = None) -> None:
+        target = set(ips) if ips is not None else None
+        for device in self._devices.values():
+            if not device.hostname:
+                continue
+            if target is not None and device.ip not in target:
+                continue
+            device.hostname = ""
+            device.device_type = self._classify(device)
+            self.device_changed.emit(device.key)
+
     def get_device(self, key: str) -> Device | None:
         return self._devices.get(key)
 
