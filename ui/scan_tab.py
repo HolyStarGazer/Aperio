@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QSpinBox,
@@ -195,9 +196,17 @@ class ScanTab(QWidget):
         self.subnet_label = QLabel(f"will scan {subnet_hint}")
         self.subnet_label.setStyleSheet("color: gray;")
 
+        self.arp_progress = QProgressBar()
+        self.arp_progress.setMinimumWidth(220)
+        self.arp_progress.setMaximumWidth(280)
+        self.arp_progress.setTextVisible(True)
+        self.arp_progress.setFormat("%v / %m hosts")
+        self.arp_progress.setVisible(False)
+
         arp_row = QHBoxLayout()
         arp_row.addWidget(self.arp_scan_button)
         arp_row.addWidget(self.subnet_label)
+        arp_row.addWidget(self.arp_progress)
         arp_row.addStretch()
 
         recent_title = QLabel("Recent captures")
@@ -213,6 +222,15 @@ class ScanTab(QWidget):
         self.recent_layout.addWidget(self._recent_placeholder)
 
         self.status_label = QLabel("Status: Idle")
+        status_font = self.status_label.font()
+        status_font.setBold(True)
+        status_font.setPointSize(status_font.pointSize() + 1)
+        self.status_label.setFont(status_font)
+        self.status_label.setStyleSheet(
+            "QLabel { padding: 8px 12px;"
+            " background: palette(alternate-base);"
+            " border-radius: 4px; }"
+        )
 
         layout.addWidget(title)
         layout.addLayout(iface_row)
@@ -228,10 +246,11 @@ class ScanTab(QWidget):
         layout.addSpacing(8)
         layout.addWidget(discovery_title)
         layout.addLayout(arp_row)
-        layout.addSpacing(8)
+        layout.addSpacing(12)
+        layout.addWidget(self.status_label)
+        layout.addSpacing(12)
         layout.addWidget(recent_title)
         layout.addWidget(self.recent_container)
-        layout.addWidget(self.status_label)
         layout.addStretch()
 
         scroll.setWidget(content)
@@ -307,7 +326,21 @@ class ScanTab(QWidget):
 
     def set_arp_scanning(self, scanning: bool) -> None:
         self._arp_scanning = scanning
+        if scanning:
+            self.arp_progress.setValue(0)
+            self.arp_progress.setMaximum(1)
+            self.arp_progress.setVisible(True)
+            self.subnet_label.setVisible(False)
+        else:
+            self.arp_progress.setVisible(False)
+            self.subnet_label.setVisible(True)
         self._update_enabled()
+
+    def set_arp_progress(self, scanned: int, total: int) -> None:
+        if total <= 0:
+            return
+        self.arp_progress.setMaximum(total)
+        self.arp_progress.setValue(scanned)
 
     def _update_enabled(self) -> None:
         active = self._capturing or self._loading or self._arp_scanning

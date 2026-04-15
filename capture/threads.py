@@ -1,3 +1,4 @@
+import ipaddress
 import queue
 import socket
 import time
@@ -131,7 +132,12 @@ class RecentCapturesScanner(QThread):
 
 
 class ArpScannerThread(QThread):
+    MAX_HOSTS = 1024
+    CHUNK_SIZE = 32
+    CHUNK_TIMEOUT = 1
+
     device_discovered = pyqtSignal(dict)
+    scan_progress = pyqtSignal(int, int)
     scan_complete = pyqtSignal(int)
     scan_failed = pyqtSignal(str)
 
@@ -142,41 +148,68 @@ class ArpScannerThread(QThread):
 
     def run(self) -> None:
         try:
-            request = Ether(dst="ff:ff:ff:ff:ff:ff") / ARP(pdst=self._subnet)
-            answered, _unanswered = srp(
-                request,
-                iface=self._iface,
-                timeout=2,
-                verbose=False,
-            )
-        except Exception as e:
-            self.scan_failed.emit(str(e))
+            network = ipaddress.ip_network(self._subnet, strict=False)
+            hosts = [str(ip) for ip in network.hosts()]
+        except ValueError as e:
+            self.scan_failed.emit(f"Invalid subnet: {e}")
             return
 
-        count = 0
-        for _sent, received in answered:
-            try:
-                src_ip = str(received.psrc)
-                src_mac = str(received.hwsrc)
-            except Exception:
-                continue
-            synthetic = {
-                "timestamp": float(time.time()),
-                "src_ip": src_ip,
-                "dst_ip": "",
-                "src_port": None,
-                "dst_port": None,
-                "src_mac": src_mac,
-                "dst_mac": "",
-                "protocol": "ARP",
-                "info": f"ARP scan reply from {src_ip}",
-                "length": len(received),
-                "_raw": received,
-            }
-            self.device_discovered.emit(synthetic)
-            count += 1
+        total = len(hosts)
+        if total == 0:
+            self.scan_complete.emit(0)
+            return
+        if total > self.MAX_HOSTS:
+            self.scan_failed.emit(
+                f"Subnet too large to scan ({total} hosts, limit {self.MAX_HOSTS})"
+            )
+            return
 
-        self.scan_complete.emit(count)
+        self.scan_progress.emit(0, total)
+
+        found = 0
+        scanned = 0
+        for chunk_start in range(0, total, self.CHUNK_SIZE):
+            chunk = hosts[chunk_start : chunk_start + self.CHUNK_SIZE]
+            try:
+                requests = [
+                    Ether(dst="ff:ff:ff:ff:ff:ff") / ARP(pdst=ip) for ip in chunk
+                ]
+                answered, _unanswered = srp(
+                    requests,
+                    iface=self._iface,
+                    timeout=self.CHUNK_TIMEOUT,
+                    verbose=False,
+                )
+            except Exception as e:
+                self.scan_failed.emit(str(e))
+                return
+
+            for _sent, received in answered:
+                try:
+                    src_ip = str(received.psrc)
+                    src_mac = str(received.hwsrc)
+                except Exception:
+                    continue
+                synthetic = {
+                    "timestamp": float(time.time()),
+                    "src_ip": src_ip,
+                    "dst_ip": "",
+                    "src_port": None,
+                    "dst_port": None,
+                    "src_mac": src_mac,
+                    "dst_mac": "",
+                    "protocol": "ARP",
+                    "info": f"ARP scan reply from {src_ip}",
+                    "length": len(received),
+                    "_raw": received,
+                }
+                self.device_discovered.emit(synthetic)
+                found += 1
+
+            scanned += len(chunk)
+            self.scan_progress.emit(scanned, total)
+
+        self.scan_complete.emit(found)
 
 
 class HostnameResolverThread(QThread):

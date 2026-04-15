@@ -217,6 +217,7 @@ class MainWindow(QMainWindow):
             return
         self.arp_scanner = ArpScannerThread(iface, subnet, self)
         self.arp_scanner.device_discovered.connect(self.device_registry.observe)
+        self.arp_scanner.scan_progress.connect(self.scan_tab.set_arp_progress)
         self.arp_scanner.scan_complete.connect(self._on_arp_scan_complete)
         self.arp_scanner.scan_failed.connect(self._on_arp_scan_failed)
         self.arp_scanner.start()
