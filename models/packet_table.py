@@ -6,8 +6,18 @@ from PyQt6.QtCore import (
     QSortFilterProxyModel,
     Qt,
 )
+from PyQt6.QtGui import QColor
 
 MAX_PACKETS = 10_000
+
+PROTOCOL_COLORS: dict[str, QColor] = {
+    "TCP": QColor(70, 120, 200, 45),
+    "UDP": QColor(70, 180, 110, 45),
+    "ARP": QColor(220, 180, 60, 55),
+    "ICMP": QColor(220, 90, 90, 55),
+    "ICMPv6": QColor(220, 90, 90, 55),
+    "DNS": QColor(160, 100, 210, 55),
+}
 
 
 class PacketTableModel(QAbstractTableModel):
@@ -32,6 +42,11 @@ class PacketTableModel(QAbstractTableModel):
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
         if not index.isValid():
             return None
+
+        if role == Qt.ItemDataRole.BackgroundRole:
+            packet = self._packets[index.row()]
+            return PROTOCOL_COLORS.get(packet["protocol"])
+
         if role != Qt.ItemDataRole.DisplayRole:
             return None
 
@@ -118,6 +133,19 @@ class PacketTableModel(QAbstractTableModel):
         if hostname and hostname != ip:
             return hostname
         return ip
+
+    def recent_packets(self, limit: int) -> list[dict]:
+        if limit <= 0 or not self._packets:
+            return []
+        return list(self._packets[-limit:])
+
+    def get_hostname(self, ip: str) -> str:
+        if not ip:
+            return ""
+        cached = self._hostname_cache.get(ip)
+        if isinstance(cached, str) and cached and cached != ip:
+            return cached
+        return ""
 
     @property
     def total_captured(self) -> int:

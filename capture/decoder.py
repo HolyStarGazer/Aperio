@@ -1,4 +1,4 @@
-from scapy.all import ARP, IP, TCP, UDP, Ether
+from scapy.all import ARP, ICMP, IP, TCP, UDP, Ether
 
 
 def decode_packet(pkt) -> dict:
@@ -43,10 +43,17 @@ def decode_packet(pkt) -> dict:
             result["info"] = f"{tcp.sport} → {tcp.dport}  flags={tcp.flags}"
         elif pkt.haslayer(UDP):
             udp = pkt[UDP]
-            result["protocol"] = "UDP"
             result["src_port"] = int(udp.sport)
             result["dst_port"] = int(udp.dport)
+            if udp.sport == 53 or udp.dport == 53:
+                result["protocol"] = "DNS"
+            else:
+                result["protocol"] = "UDP"
             result["info"] = f"{udp.sport} → {udp.dport}"
+        elif pkt.haslayer(ICMP):
+            icmp = pkt[ICMP]
+            result["protocol"] = "ICMP"
+            result["info"] = f"ICMP type={icmp.type} code={icmp.code}"
         else:
             result["protocol"] = f"IP/{ip.proto}"
 

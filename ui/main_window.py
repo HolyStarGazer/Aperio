@@ -16,6 +16,7 @@ from capture.files import find_latest_capture, new_capture_path
 from capture.hostname_cache import HostnameCache
 from capture.threads import ArpScannerThread, CaptureThread, PcapLoaderThread
 from models.device_registry import DeviceRegistryModel
+from ui.dashboard_tab import DashboardTab
 from ui.devices_tab import DevicesTab
 from ui.packets_tab import PacketsTab
 from ui.scan_tab import ScanTab
@@ -36,6 +37,7 @@ class MainWindow(QMainWindow):
         self.packets_tab = PacketsTab(self.hostname_cache)
         self.devices_tab = DevicesTab(self.device_registry)
         self.topology_tab = TopologyTab(self.device_registry)
+        self.dashboard_tab = DashboardTab(self.device_registry, self.packets_tab.model)
         self.scan_tab = ScanTab()
         self.capture_thread: CaptureThread | None = None
         self.loader_thread: PcapLoaderThread | None = None
@@ -53,6 +55,8 @@ class MainWindow(QMainWindow):
                 self.content.addWidget(self.devices_tab)
             elif name == "Topology":
                 self.content.addWidget(self.topology_tab)
+            elif name == "Dashboard":
+                self.content.addWidget(self.dashboard_tab)
             else:
                 placeholder = QLabel(f"{name} (placeholder)")
                 placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -86,6 +90,7 @@ class MainWindow(QMainWindow):
         self.scan_tab.load_requested.connect(self._on_load_requested)
         self.scan_tab.arp_scan_requested.connect(self._on_arp_scan_requested)
         self.devices_tab.view_packets_requested.connect(self._on_view_packets_for_device)
+        self.dashboard_tab.view_packets_requested.connect(self._on_view_packets_for_device)
 
     def _resolve_pcap_path(self, append: bool) -> tuple[Path, bool]:
         if append:
