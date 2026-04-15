@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from capture.threads import HostnameResolverThread
 from models.packet_table import PacketFilterProxyModel, PacketTableModel
 
 
@@ -75,6 +76,10 @@ class PacketsTab(QWidget):
         self.port_filter.textChanged.connect(self.proxy.set_port_filter)
         self.clear_button.clicked.connect(self._on_clear)
 
+        self.resolver = HostnameResolverThread(self)
+        self.resolver.hostname_resolved.connect(self.model.apply_hostname)
+        self.resolver.start()
+
         layout.addWidget(self.header)
         layout.addLayout(filter_bar)
         layout.addWidget(self.view)
@@ -82,6 +87,9 @@ class PacketsTab(QWidget):
     def _on_clear(self) -> None:
         self.model.clear()
         self.header.setText("Packets — 0 captured")
+
+    def shutdown(self) -> None:
+        self.resolver.stop()
 
     def _is_default_order(self) -> bool:
         sort_column = self.proxy.sortColumn()
@@ -97,6 +105,10 @@ class PacketsTab(QWidget):
 
         self.model.append_packet(packet, allow_eviction=at_bottom and default_order)
         self.header.setText(f"Packets — {self.model.total_captured} captured")
+
+        for ip in (packet["src_ip"], packet["dst_ip"]):
+            if self.model.mark_pending_hostname(ip):
+                self.resolver.enqueue(ip)
 
         if at_bottom and default_order:
             self.view.scrollToBottom()

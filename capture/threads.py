@@ -1,3 +1,5 @@
+import queue
+import socket
 from pathlib import Path
 
 from PyQt6.QtCore import QThread, pyqtSignal
@@ -125,3 +127,36 @@ class RecentCapturesScanner(QThread):
             results.append((path, count))
 
         self.scan_complete.emit(results)
+
+
+class HostnameResolverThread(QThread):
+    hostname_resolved = pyqtSignal(str, str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._queue: queue.Queue = queue.Queue()
+        self._running = True
+
+    def enqueue(self, ip: str) -> None:
+        self._queue.put(ip)
+
+    def run(self) -> None:
+        while self._running:
+            try:
+                ip = self._queue.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            if ip is None:
+                break
+            try:
+                hostname, _, _ = socket.gethostbyaddr(ip)
+            except (socket.herror, socket.gaierror, OSError):
+                hostname = ip
+            self.hostname_resolved.emit(ip, hostname)
+
+    def stop(self) -> None:
+        self._running = False
+        self._queue.put(None)
+        if not self.wait(2000):
+            self.terminate()
+            self.wait()

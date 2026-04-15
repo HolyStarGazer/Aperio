@@ -176,4 +176,5 @@ class MainWindow(QMainWindow):
             self.capture_thread.stop()
         if self.loader_thread is not None:
             self.loader_thread.wait()
+        self.packets_tab.shutdown()
         super().closeEvent(event)

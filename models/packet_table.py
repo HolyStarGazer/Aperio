@@ -17,6 +17,7 @@ class PacketTableModel(QAbstractTableModel):
         super().__init__(parent)
         self._packets: list[dict] = []
         self._next_number = 0
+        self._hostname_cache: dict[str, str | None] = {}
 
     def rowCount(self, parent=QModelIndex()):
         if parent.isValid():
@@ -42,9 +43,9 @@ class PacketTableModel(QAbstractTableModel):
         if column == 1:
             return self._format_time(packet["timestamp"])
         if column == 2:
-            return packet["src_ip"]
+            return self._display_ip(packet["src_ip"])
         if column == 3:
-            return packet["dst_ip"]
+            return self._display_ip(packet["dst_ip"])
         if column == 4:
             return packet["protocol"]
         if column == 5:
@@ -83,6 +84,36 @@ class PacketTableModel(QAbstractTableModel):
 
     def get_packet(self, row: int) -> dict:
         return self._packets[row]
+
+    def mark_pending_hostname(self, ip: str) -> bool:
+        if not ip or ip in self._hostname_cache:
+            return False
+        self._hostname_cache[ip] = None
+        return True
+
+    def apply_hostname(self, ip: str, hostname: str) -> None:
+        if ip not in self._hostname_cache:
+            return
+        self._hostname_cache[ip] = hostname
+        if not self._packets:
+            return
+        matching = [
+            i for i, p in enumerate(self._packets)
+            if p["src_ip"] == ip or p["dst_ip"] == ip
+        ]
+        if not matching:
+            return
+        top_left = self.index(matching[0], 2)
+        bottom_right = self.index(matching[-1], 3)
+        self.dataChanged.emit(top_left, bottom_right, [Qt.ItemDataRole.DisplayRole])
+
+    def _display_ip(self, ip: str) -> str:
+        if not ip:
+            return ""
+        hostname = self._hostname_cache.get(ip)
+        if hostname and hostname != ip:
+            return hostname
+        return ip
 
     @property
     def total_captured(self) -> int:
