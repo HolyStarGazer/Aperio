@@ -1,6 +1,8 @@
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QColor, QPainter
 from PyQt6.QtWidgets import (
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -14,8 +16,108 @@ from PyQt6.QtWidgets import (
 )
 
 from models.device_registry import Device, DeviceRegistryModel
-from models.packet_table import PacketTableModel
+from models.packet_table import PROTOCOL_COLORS, PacketTableModel
 from ui.device_card import DeviceCard
+
+
+PROTOCOL_ORDER = ["TCP", "UDP", "ARP", "DNS", "ICMP", "Other"]
+
+
+def _bucket_protocol(raw: str) -> str:
+    if raw in PROTOCOL_ORDER:
+        return raw
+    if raw == "ICMPv6":
+        return "ICMP"
+    return "Other"
+
+
+def _bar_color_for(protocol: str) -> QColor:
+    base = PROTOCOL_COLORS.get(protocol)
+    if base is None:
+        return QColor(160, 160, 160, 220)
+    return QColor(base.red(), base.green(), base.blue(), 220)
+
+
+class ProtocolBar(QWidget):
+    def __init__(self, color: QColor, parent=None):
+        super().__init__(parent)
+        self._color = color
+        self._fraction = 0.0
+        self.setMinimumHeight(14)
+        self.setMinimumWidth(120)
+
+    def set_fraction(self, fraction: float) -> None:
+        self._fraction = max(0.0, min(1.0, fraction))
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        track = QColor(120, 120, 120, 40)
+        painter.fillRect(self.rect(), track)
+        filled_w = int(self.width() * self._fraction)
+        if filled_w > 0:
+            painter.fillRect(0, 0, filled_w, self.height(), self._color)
+
+
+class ProtocolBreakdownWidget(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+
+        title = QLabel("Protocol breakdown")
+        title_font = title.font()
+        title_font.setBold(True)
+        title.setFont(title_font)
+        layout.addWidget(title)
+
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(3)
+        grid.setContentsMargins(0, 0, 0, 0)
+
+        self._rows: dict[str, tuple[ProtocolBar, QLabel]] = {}
+        for row, protocol in enumerate(PROTOCOL_ORDER):
+            name_label = QLabel(protocol)
+            name_label.setMinimumWidth(50)
+
+            bar = ProtocolBar(_bar_color_for(protocol))
+
+            count_label = QLabel("0 (0%)")
+            count_label.setMinimumWidth(110)
+            count_label.setStyleSheet("color: gray;")
+            count_label.setAlignment(
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+            )
+
+            grid.addWidget(name_label, row, 0)
+            grid.addWidget(bar, row, 1)
+            grid.addWidget(count_label, row, 2)
+
+            self._rows[protocol] = (bar, count_label)
+
+        grid.setColumnStretch(1, 1)
+        layout.addLayout(grid)
+
+    def update_counts(self, raw_counts: dict[str, int]) -> None:
+        buckets: dict[str, int] = {name: 0 for name in PROTOCOL_ORDER}
+        for proto, count in raw_counts.items():
+            buckets[_bucket_protocol(proto)] += count
+
+        total = sum(buckets.values())
+        for protocol, (bar, count_label) in self._rows.items():
+            count = buckets.get(protocol, 0)
+            if total > 0:
+                fraction = count / total
+                pct = int(round(fraction * 100))
+            else:
+                fraction = 0.0
+                pct = 0
+            bar.set_fraction(fraction)
+            count_label.setText(f"{count:,} ({pct}%)")
 
 
 class StatCard(QFrame):
@@ -84,6 +186,8 @@ class DashboardTab(QWidget):
         stats_row.addWidget(self.bytes_stat)
         stats_row.addWidget(self.edges_stat)
 
+        self.protocol_breakdown = ProtocolBreakdownWidget()
+
         splitter = QSplitter(Qt.Orientation.Horizontal)
 
         devices_panel = QWidget()
@@ -151,6 +255,7 @@ class DashboardTab(QWidget):
         splitter.setChildrenCollapsible(False)
 
         populated_layout.addLayout(stats_row)
+        populated_layout.addWidget(self.protocol_breakdown)
         populated_layout.addWidget(splitter, stretch=1)
 
         self.content_stack.addWidget(populated)
@@ -217,6 +322,8 @@ class DashboardTab(QWidget):
         self.packet_stat.set_value(f"{total_packets:,}")
         self.bytes_stat.set_value(self._format_bytes(total_bytes))
         self.edges_stat.set_value(str(len(edges)))
+
+        self.protocol_breakdown.update_counts(self.packets_model.protocol_counts())
 
         recent_devices = sorted(
             devices, key=lambda d: d.last_seen, reverse=True

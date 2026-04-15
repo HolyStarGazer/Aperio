@@ -139,6 +139,13 @@ class PacketTableModel(QAbstractTableModel):
             return []
         return list(self._packets[-limit:])
 
+    def protocol_counts(self) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for packet in self._packets:
+            proto = packet.get("protocol", "Other")
+            counts[proto] = counts.get(proto, 0) + 1
+        return counts
+
     def get_hostname(self, ip: str) -> str:
         if not ip:
             return ""
