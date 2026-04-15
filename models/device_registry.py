@@ -8,6 +8,7 @@ from capture.files import (
     is_multicast_or_broadcast,
     is_private_ip,
 )
+from capture.os_fingerprint import guess_os_from_ttl
 from capture.oui_lookup import lookup_vendor
 
 
@@ -18,6 +19,7 @@ class Device:
     mac: str = ""
     hostname: str = ""
     vendor: str = ""
+    os_hint: str = ""
     first_seen: float = 0.0
     last_seen: float = 0.0
     packet_count: int = 0
@@ -39,6 +41,7 @@ class DeviceRegistryModel(QObject):
     def observe(self, packet: dict) -> None:
         timestamp = packet.get("timestamp", 0.0)
         length = packet.get("length", 0)
+        ttl = packet.get("ttl")
 
         src = self._observe_endpoint(
             packet.get("src_ip", ""),
@@ -46,6 +49,7 @@ class DeviceRegistryModel(QObject):
             packet.get("src_port"),
             timestamp,
             length,
+            os_hint_ttl=ttl,
         )
         dst = self._observe_endpoint(
             packet.get("dst_ip", ""),
@@ -79,6 +83,7 @@ class DeviceRegistryModel(QObject):
         port,
         timestamp: float,
         length: int,
+        os_hint_ttl: int | None = None,
     ) -> tuple[str, bool] | None:
         if is_bogus_ip(ip):
             ip = ""
@@ -117,6 +122,7 @@ class DeviceRegistryModel(QObject):
                 mac=effective_mac,
                 hostname=initial_hostname,
                 vendor=lookup_vendor(effective_mac) if effective_mac else "",
+                os_hint=guess_os_from_ttl(os_hint_ttl),
                 first_seen=timestamp,
                 last_seen=timestamp,
                 packet_count=1,
@@ -136,6 +142,10 @@ class DeviceRegistryModel(QObject):
             if not device.mac and effective_mac:
                 device.mac = effective_mac
                 device.vendor = lookup_vendor(effective_mac)
+            if not device.os_hint and os_hint_ttl is not None:
+                hint = guess_os_from_ttl(os_hint_ttl)
+                if hint:
+                    device.os_hint = hint
 
         self.device_changed.emit(key)
         return key, is_new

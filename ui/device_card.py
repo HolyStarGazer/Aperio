@@ -67,6 +67,8 @@ class DeviceCard(QFrame):
             detail_parts.append(device.mac)
         if device.vendor:
             detail_parts.append(device.vendor)
+        if device.os_hint:
+            detail_parts.append(device.os_hint)
         self.detail_label.setText("  ·  ".join(detail_parts) if detail_parts else "—")
 
         stats_parts = [f"{device.packet_count} packets"]

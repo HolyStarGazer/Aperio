@@ -15,6 +15,7 @@ def decode_packet(pkt) -> dict:
         "protocol": "Other",
         "info": pkt.summary(),
         "length": len(pkt),
+        "ttl": None,
         "_raw": pkt,
     }
 
@@ -36,6 +37,10 @@ def decode_packet(pkt) -> dict:
         ip = pkt[IP]
         result["src_ip"] = ip.src
         result["dst_ip"] = ip.dst
+        try:
+            result["ttl"] = int(ip.ttl)
+        except (TypeError, ValueError):
+            result["ttl"] = None
 
         if pkt.haslayer(TCP):
             tcp = pkt[TCP]
