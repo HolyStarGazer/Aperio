@@ -1,4 +1,4 @@
-from scapy.all import ARP, IP, TCP, UDP
+from scapy.all import ARP, IP, TCP, UDP, Ether
 
 
 def decode_packet(pkt) -> dict:
@@ -8,11 +8,18 @@ def decode_packet(pkt) -> dict:
         "dst_ip": "",
         "src_port": None,
         "dst_port": None,
+        "src_mac": "",
+        "dst_mac": "",
         "protocol": "Other",
         "info": pkt.summary(),
         "length": len(pkt),
         "_raw": pkt,
     }
+
+    if pkt.haslayer(Ether):
+        eth = pkt[Ether]
+        result["src_mac"] = str(eth.src) if eth.src else ""
+        result["dst_mac"] = str(eth.dst) if eth.dst else ""
 
     if pkt.haslayer(ARP):
         arp = pkt[ARP]

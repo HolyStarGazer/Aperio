@@ -115,6 +115,9 @@ class PacketsTab(QWidget):
             return
         self.detail_view.show_packet(packet)
 
+    def set_ip_filter(self, ip: str) -> None:
+        self.ip_filter.setText(ip)
+
     def shutdown(self) -> None:
         self.resolver.stop()
 

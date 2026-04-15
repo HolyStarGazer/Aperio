@@ -14,6 +14,8 @@ from PyQt6.QtWidgets import (
 from capture.decoder import summarize_filter
 from capture.files import find_latest_capture, new_capture_path
 from capture.threads import CaptureThread, PcapLoaderThread
+from models.device_registry import DeviceRegistryModel
+from ui.devices_tab import DevicesTab
 from ui.packets_tab import PacketsTab
 from ui.scan_tab import ScanTab
 
@@ -27,10 +29,16 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Aperio")
         self.resize(1100, 700)
 
+        self.device_registry = DeviceRegistryModel(self)
         self.packets_tab = PacketsTab()
+        self.devices_tab = DevicesTab(self.device_registry)
         self.scan_tab = ScanTab()
         self.capture_thread: CaptureThread | None = None
         self.loader_thread: PcapLoaderThread | None = None
+
+        self.packets_tab.resolver.hostname_resolved.connect(
+            self.device_registry.apply_hostname
+        )
 
         self.content = QStackedWidget()
         for name in TAB_NAMES:
@@ -38,6 +46,8 @@ class MainWindow(QMainWindow):
                 self.content.addWidget(self.packets_tab)
             elif name == "Scan":
                 self.content.addWidget(self.scan_tab)
+            elif name == "Devices":
+                self.content.addWidget(self.devices_tab)
             else:
                 placeholder = QLabel(f"{name} (placeholder)")
                 placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -69,6 +79,7 @@ class MainWindow(QMainWindow):
         self.scan_tab.start_scan_requested.connect(self._start_scan)
         self.scan_tab.stop_requested.connect(self._stop_capture)
         self.scan_tab.load_requested.connect(self._on_load_requested)
+        self.devices_tab.view_packets_requested.connect(self._on_view_packets_for_device)
 
     def _resolve_pcap_path(self, append: bool) -> tuple[Path, bool]:
         if append:
@@ -79,6 +90,10 @@ class MainWindow(QMainWindow):
 
     def _switch_to_packets_tab(self) -> None:
         self.content.setCurrentIndex(TAB_NAMES.index("Packets"))
+
+    def _on_view_packets_for_device(self, ip: str) -> None:
+        self.packets_tab.set_ip_filter(ip)
+        self._switch_to_packets_tab()
 
     def _start_live(self, iface: str, append: bool, capture_filter: dict) -> None:
         pcap_path, actually_appending = self._resolve_pcap_path(append)
@@ -125,6 +140,7 @@ class MainWindow(QMainWindow):
             self,
         )
         self.capture_thread.packet_captured.connect(self.packets_tab.on_packet_received)
+        self.capture_thread.packet_captured.connect(self.devices_tab.on_packet_received)
         self.capture_thread.capture_finished.connect(self._on_capture_finished)
         self.capture_thread.start()
         self.scan_tab.set_capturing(True)
@@ -153,6 +169,7 @@ class MainWindow(QMainWindow):
         file_path = Path(path)
         self.loader_thread = PcapLoaderThread(file_path, self)
         self.loader_thread.packet_loaded.connect(self.packets_tab.on_packet_received)
+        self.loader_thread.packet_loaded.connect(self.devices_tab.on_packet_received)
         self.loader_thread.load_finished.connect(self._on_load_finished)
         self.loader_thread.load_failed.connect(self._on_load_failed)
         self.loader_thread.start()
