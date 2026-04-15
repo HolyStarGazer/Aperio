@@ -254,6 +254,7 @@ class DashboardTab(QWidget):
         splitter.addWidget(packets_panel)
         splitter.setSizes([420, 640])
         splitter.setChildrenCollapsible(False)
+        splitter.setHandleWidth(14)
 
         populated_layout.addLayout(stats_row)
         populated_layout.addWidget(self.protocol_breakdown)

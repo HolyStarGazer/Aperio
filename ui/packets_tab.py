@@ -78,11 +78,25 @@ class PacketsTab(QWidget):
 
         self.detail_view = PacketDetailView()
 
+        detail_panel = QWidget()
+        detail_panel_layout = QVBoxLayout(detail_panel)
+        detail_panel_layout.setContentsMargins(0, 0, 0, 0)
+        detail_panel_layout.setSpacing(4)
+
+        detail_header = QLabel("Packet detail")
+        detail_header_font = detail_header.font()
+        detail_header_font.setBold(True)
+        detail_header_font.setPointSize(detail_header_font.pointSize() + 1)
+        detail_header.setFont(detail_header_font)
+        detail_panel_layout.addWidget(detail_header)
+        detail_panel_layout.addWidget(self.detail_view)
+
         splitter = QSplitter(Qt.Orientation.Vertical)
         splitter.addWidget(self.view)
-        splitter.addWidget(self.detail_view)
+        splitter.addWidget(detail_panel)
         splitter.setSizes([450, 250])
         splitter.setChildrenCollapsible(False)
+        splitter.setHandleWidth(14)
 
         self.protocol_filter.textChanged.connect(self.proxy.set_protocol_filter)
         self.ip_filter.textChanged.connect(self.proxy.set_ip_filter)

@@ -1,5 +1,9 @@
+from pathlib import Path
+
 from PyQt6.QtGui import QColor, QPalette
 from PyQt6.QtWidgets import QApplication
+
+ASSETS_DIR = Path(__file__).parent / "assets"
 
 
 BASE_QSS = """
@@ -53,10 +57,8 @@ QPushButton:disabled {
     background-color: palette(alternate-base);
 }
 
-/* === Line edits / spin boxes / combo boxes === */
+/* === Line edits / combo boxes === */
 QLineEdit,
-QSpinBox,
-QDoubleSpinBox,
 QComboBox {
     background-color: palette(base);
     border: 1px solid palette(mid);
@@ -68,13 +70,10 @@ QComboBox {
     min-height: 20px;
 }
 QLineEdit:focus,
-QSpinBox:focus,
-QDoubleSpinBox:focus,
 QComboBox:focus {
     border: 1px solid palette(highlight);
 }
 QLineEdit:disabled,
-QSpinBox:disabled,
 QComboBox:disabled {
     color: palette(mid);
     background-color: palette(alternate-base);
@@ -82,6 +81,75 @@ QComboBox:disabled {
 QComboBox::drop-down {
     border: none;
     width: 22px;
+}
+
+/* === Spin boxes (explicit subcontrols; Qt's 'style all or none' rule) === */
+QSpinBox,
+QDoubleSpinBox {
+    background-color: palette(base);
+    border: 1px solid palette(mid);
+    border-radius: 4px;
+    padding: 4px 24px 4px 9px;
+    color: palette(text);
+    selection-background-color: palette(highlight);
+    selection-color: palette(highlighted-text);
+    min-height: 22px;
+}
+QSpinBox:focus,
+QDoubleSpinBox:focus {
+    border: 1px solid palette(highlight);
+}
+QSpinBox:disabled,
+QDoubleSpinBox:disabled {
+    color: palette(mid);
+    background-color: palette(alternate-base);
+}
+QSpinBox::up-button,
+QDoubleSpinBox::up-button {
+    subcontrol-origin: border;
+    subcontrol-position: top right;
+    width: 20px;
+    background: palette(button);
+    border-left: 1px solid palette(mid);
+    border-bottom: 1px solid palette(mid);
+    border-top-right-radius: 3px;
+}
+QSpinBox::up-button:hover,
+QDoubleSpinBox::up-button:hover {
+    background: palette(midlight);
+}
+QSpinBox::up-button:pressed,
+QDoubleSpinBox::up-button:pressed {
+    background: palette(dark);
+}
+QSpinBox::down-button,
+QDoubleSpinBox::down-button {
+    subcontrol-origin: border;
+    subcontrol-position: bottom right;
+    width: 20px;
+    background: palette(button);
+    border-left: 1px solid palette(mid);
+    border-bottom-right-radius: 3px;
+}
+QSpinBox::down-button:hover,
+QDoubleSpinBox::down-button:hover {
+    background: palette(midlight);
+}
+QSpinBox::down-button:pressed,
+QDoubleSpinBox::down-button:pressed {
+    background: palette(dark);
+}
+QSpinBox::up-arrow,
+QDoubleSpinBox::up-arrow {
+    image: url(__ASSETS__/arrow-up-__THEME__.svg);
+    width: 10px;
+    height: 6px;
+}
+QSpinBox::down-arrow,
+QDoubleSpinBox::down-arrow {
+    image: url(__ASSETS__/arrow-down-__THEME__.svg);
+    width: 10px;
+    height: 6px;
 }
 
 /* === Check boxes === */
@@ -156,14 +224,14 @@ QProgressBar::chunk {
 /* === Scroll bars === */
 QScrollBar:vertical {
     background: palette(alternate-base);
-    width: 12px;
+    width: 9px;
     margin: 0;
     border: none;
 }
 QScrollBar::handle:vertical {
     background: palette(mid);
-    border-radius: 6px;
-    min-height: 28px;
+    border-radius: 4px;
+    min-height: 24px;
 }
 QScrollBar::handle:vertical:hover {
     background: palette(dark);
@@ -175,14 +243,14 @@ QScrollBar::sub-line:vertical {
 
 QScrollBar:horizontal {
     background: palette(alternate-base);
-    height: 12px;
+    height: 9px;
     margin: 0;
     border: none;
 }
 QScrollBar::handle:horizontal {
     background: palette(mid);
-    border-radius: 6px;
-    min-width: 28px;
+    border-radius: 4px;
+    min-width: 24px;
 }
 QScrollBar::handle:horizontal:hover {
     background: palette(dark);
@@ -194,13 +262,10 @@ QScrollBar::sub-line:horizontal {
 
 /* === Splitter === */
 QSplitter::handle {
-    background-color: palette(mid);
+    background-color: palette(window);
 }
-QSplitter::handle:horizontal {
-    width: 2px;
-}
-QSplitter::handle:vertical {
-    height: 2px;
+QSplitter::handle:hover {
+    background-color: palette(highlight);
 }
 """
 
@@ -337,6 +402,15 @@ def dark_palette() -> QPalette:
     return palette
 
 
+def _resolved_qss(theme: str) -> str:
+    assets_path = str(ASSETS_DIR.resolve()).replace("\\", "/")
+    return (
+        BASE_QSS
+        .replace("__ASSETS__", assets_path)
+        .replace("__THEME__", theme)
+    )
+
+
 def apply_theme(theme: str) -> None:
     app = QApplication.instance()
     if app is None:
@@ -346,7 +420,7 @@ def apply_theme(theme: str) -> None:
 
     if theme == "dark":
         app.setPalette(dark_palette())
-        app.setStyleSheet(BASE_QSS + DARK_QSS)
     else:
         app.setPalette(light_palette())
-        app.setStyleSheet(BASE_QSS)
+
+    app.setStyleSheet(_resolved_qss(theme))
