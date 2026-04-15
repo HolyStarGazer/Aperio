@@ -8,6 +8,7 @@ from capture.files import (
     is_multicast_or_broadcast,
     is_private_ip,
 )
+from capture.device_type import guess_device_type
 from capture.os_fingerprint import guess_os_from_ttl
 from capture.oui_lookup import lookup_vendor
 
@@ -20,6 +21,7 @@ class Device:
     hostname: str = ""
     vendor: str = ""
     os_hint: str = ""
+    device_type: str = ""
     first_seen: float = 0.0
     last_seen: float = 0.0
     packet_count: int = 0
@@ -32,11 +34,31 @@ class DeviceRegistryModel(QObject):
     devices_cleared = pyqtSignal()
     topology_structure_changed = pyqtSignal()
 
-    def __init__(self, hostname_cache=None, parent=None):
+    def __init__(
+        self,
+        hostname_cache=None,
+        gateway_ip: str = "",
+        local_ip: str = "",
+        parent=None,
+    ):
         super().__init__(parent)
         self._devices: dict[str, Device] = {}
         self._edges: set[tuple[str, str]] = set()
         self._hostname_cache = hostname_cache
+        self._gateway_ip = gateway_ip
+        self._local_ip = local_ip
+
+    def _classify(self, device: Device) -> str:
+        is_gateway = bool(self._gateway_ip) and device.ip == self._gateway_ip
+        is_self = bool(self._local_ip) and device.ip == self._local_ip
+        return guess_device_type(
+            device.vendor,
+            device.os_hint,
+            device.ports,
+            is_gateway=is_gateway,
+            is_self=is_self,
+            hostname=device.hostname,
+        )
 
     def observe(self, packet: dict) -> None:
         timestamp = packet.get("timestamp", 0.0)
@@ -130,6 +152,7 @@ class DeviceRegistryModel(QObject):
             )
             if port is not None:
                 device.ports.add(port)
+            device.device_type = self._classify(device)
             self._devices[key] = device
         else:
             device.last_seen = timestamp
@@ -146,6 +169,7 @@ class DeviceRegistryModel(QObject):
                 hint = guess_os_from_ttl(os_hint_ttl)
                 if hint:
                     device.os_hint = hint
+            device.device_type = self._classify(device)
 
         self.device_changed.emit(key)
         return key, is_new
@@ -156,6 +180,7 @@ class DeviceRegistryModel(QObject):
         for device in self._devices.values():
             if device.ip == ip and device.hostname != hostname:
                 device.hostname = hostname
+                device.device_type = self._classify(device)
                 self.device_changed.emit(device.key)
 
     def get_device(self, key: str) -> Device | None:

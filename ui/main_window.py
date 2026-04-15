@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import (
 )
 
 from capture.decoder import summarize_filter
-from capture.files import find_latest_capture, new_capture_path
+from capture.files import detect_network_context, find_latest_capture, new_capture_path
 from capture.hostname_cache import HostnameCache
 from capture.threads import ArpScannerThread, CaptureThread, PcapLoaderThread
 from models.device_registry import DeviceRegistryModel
@@ -49,7 +49,13 @@ class MainWindow(QMainWindow):
         self.resize(1100, 700)
 
         self.hostname_cache = HostnameCache()
-        self.device_registry = DeviceRegistryModel(self.hostname_cache, self)
+        local_ip, gateway_ip = detect_network_context()
+        self.device_registry = DeviceRegistryModel(
+            self.hostname_cache,
+            gateway_ip=gateway_ip,
+            local_ip=local_ip,
+            parent=self,
+        )
         self.packets_tab = PacketsTab(self.hostname_cache)
         self.devices_tab = DevicesTab(self.device_registry)
         self.topology_tab = TopologyTab(self.device_registry)

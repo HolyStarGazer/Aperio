@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from capture.device_type import type_label
 from capture.services import format_port
 from models.device_registry import Device
 
@@ -58,6 +59,8 @@ class DeviceCard(QFrame):
         self._ip = device.ip
 
         title = device.hostname or device.ip or device.mac or device.key
+        if device.device_type and device.device_type != "unknown":
+            title = f"{title}  [{type_label(device.device_type)}]"
         self.title_label.setText(title)
 
         detail_parts = []
