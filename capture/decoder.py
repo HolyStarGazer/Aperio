@@ -1,5 +1,7 @@
 from scapy.all import ARP, ICMP, IP, TCP, UDP, Ether
 
+from capture.services import format_port
+
 
 def decode_packet(pkt) -> dict:
     result = {
@@ -38,18 +40,24 @@ def decode_packet(pkt) -> dict:
         if pkt.haslayer(TCP):
             tcp = pkt[TCP]
             result["protocol"] = "TCP"
-            result["src_port"] = int(tcp.sport)
-            result["dst_port"] = int(tcp.dport)
-            result["info"] = f"{tcp.sport} → {tcp.dport}  flags={tcp.flags}"
+            sport = int(tcp.sport)
+            dport = int(tcp.dport)
+            result["src_port"] = sport
+            result["dst_port"] = dport
+            result["info"] = (
+                f"{format_port(sport)} → {format_port(dport)}  flags={tcp.flags}"
+            )
         elif pkt.haslayer(UDP):
             udp = pkt[UDP]
-            result["src_port"] = int(udp.sport)
-            result["dst_port"] = int(udp.dport)
-            if udp.sport == 53 or udp.dport == 53:
+            sport = int(udp.sport)
+            dport = int(udp.dport)
+            result["src_port"] = sport
+            result["dst_port"] = dport
+            if sport == 53 or dport == 53:
                 result["protocol"] = "DNS"
             else:
                 result["protocol"] = "UDP"
-            result["info"] = f"{udp.sport} → {udp.dport}"
+            result["info"] = f"{format_port(sport)} → {format_port(dport)}"
         elif pkt.haslayer(ICMP):
             icmp = pkt[ICMP]
             result["protocol"] = "ICMP"

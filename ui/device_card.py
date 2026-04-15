@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from capture.services import format_port
 from models.device_registry import Device
 
 
@@ -78,7 +79,7 @@ class DeviceCard(QFrame):
         if device.ports:
             sorted_ports = sorted(device.ports)
             shown = sorted_ports[:6]
-            port_str = ", ".join(str(p) for p in shown)
+            port_str = ", ".join(format_port(p) for p in shown)
             if len(sorted_ports) > 6:
                 port_str += f" (+{len(sorted_ports) - 6})"
             stats_parts.append(f"ports: {port_str}")

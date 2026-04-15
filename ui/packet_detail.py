@@ -1,5 +1,7 @@
 from PyQt6.QtWidgets import QHeaderView, QTreeWidget, QTreeWidgetItem
 
+from capture.services import service_name
+
 
 LAYER_TOOLTIPS = {
     "Ethernet": (
@@ -201,6 +203,10 @@ class PacketDetailView(QTreeWidget):
                 except Exception:
                     value = None
                 value_str = self._format_value(value)
+                if field_name in ("sport", "dport") and isinstance(value, int):
+                    svc = service_name(value)
+                    if svc:
+                        value_str = f"{value} ({svc})"
                 field_item = QTreeWidgetItem([field_name, value_str])
                 field_tooltip = FIELD_TOOLTIPS.get((name, field_name))
                 if field_tooltip:
