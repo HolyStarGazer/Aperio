@@ -18,6 +18,7 @@ from models.device_registry import DeviceRegistryModel
 from ui.devices_tab import DevicesTab
 from ui.packets_tab import PacketsTab
 from ui.scan_tab import ScanTab
+from ui.topology_tab import TopologyTab
 
 TAB_NAMES = ["Dashboard", "Devices", "Topology", "Packets", "Scan"]
 
@@ -32,6 +33,7 @@ class MainWindow(QMainWindow):
         self.device_registry = DeviceRegistryModel(self)
         self.packets_tab = PacketsTab()
         self.devices_tab = DevicesTab(self.device_registry)
+        self.topology_tab = TopologyTab(self.device_registry)
         self.scan_tab = ScanTab()
         self.capture_thread: CaptureThread | None = None
         self.loader_thread: PcapLoaderThread | None = None
@@ -48,6 +50,8 @@ class MainWindow(QMainWindow):
                 self.content.addWidget(self.scan_tab)
             elif name == "Devices":
                 self.content.addWidget(self.devices_tab)
+            elif name == "Topology":
+                self.content.addWidget(self.topology_tab)
             else:
                 placeholder = QLabel(f"{name} (placeholder)")
                 placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
