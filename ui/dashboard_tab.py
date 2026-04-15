@@ -123,6 +123,7 @@ class ProtocolBreakdownWidget(QWidget):
 class StatCard(QFrame):
     def __init__(self, title: str, parent=None):
         super().__init__(parent)
+        self.setObjectName("statCard")
         self.setFrameShape(QFrame.Shape.StyledPanel)
         self.setFrameShadow(QFrame.Shadow.Raised)
 

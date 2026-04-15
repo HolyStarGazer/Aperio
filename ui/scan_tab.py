@@ -34,7 +34,7 @@ class RecentCaptureCard(QFrame):
     def __init__(self, path: Path, packet_count: int, parent=None):
         super().__init__(parent)
         self._path = path
-
+        self.setObjectName("recentCaptureCard")
         self.setFrameShape(QFrame.Shape.StyledPanel)
         self.setFrameShadow(QFrame.Shadow.Raised)
 

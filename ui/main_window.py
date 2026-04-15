@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QSettings, Qt
 from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -20,14 +20,30 @@ from ui.dashboard_tab import DashboardTab
 from ui.devices_tab import DevicesTab
 from ui.packets_tab import PacketsTab
 from ui.scan_tab import ScanTab
+from ui.theme import apply_theme
 from ui.topology_tab import TopologyTab
 
 TAB_NAMES = ["Dashboard", "Devices", "Topology", "Packets", "Scan"]
 
+SIDEBAR_ICONS = {
+    "Dashboard": "⌂",
+    "Devices": "◉",
+    "Topology": "⬡",
+    "Packets": "≡",
+    "Scan": "⊕",
+}
+
+SIDEBAR_WIDTH_EXPANDED = 180
+SIDEBAR_WIDTH_COLLAPSED = 56
+
 
 class MainWindow(QMainWindow):
-    def __init__(self):
+    def __init__(self, settings: QSettings):
         super().__init__()
+
+        self._settings = settings
+        self._theme = settings.value("theme", "dark", type=str)
+        self._sidebar_expanded = settings.value("sidebar_expanded", True, type=bool)
 
         self.setWindowTitle("Aperio")
         self.resize(1100, 700)
@@ -62,24 +78,44 @@ class MainWindow(QMainWindow):
                 placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 self.content.addWidget(placeholder)
 
-        sidebar = QWidget()
-        sidebar.setFixedWidth(160)
-        sidebar_layout = QVBoxLayout(sidebar)
-        sidebar_layout.setContentsMargins(8, 8, 8, 8)
+        self._sidebar = QWidget()
+        sidebar_layout = QVBoxLayout(self._sidebar)
+        sidebar_layout.setContentsMargins(6, 8, 6, 8)
         sidebar_layout.setSpacing(4)
 
+        self._hamburger = QPushButton("☰")
+        self._hamburger.setObjectName("sidebarHamburger")
+        self._hamburger.setMinimumHeight(36)
+        self._hamburger.clicked.connect(self._toggle_sidebar)
+        sidebar_layout.addWidget(self._hamburger)
+
+        sidebar_layout.addSpacing(8)
+
+        self._sidebar_buttons: list[QPushButton] = []
         for index, name in enumerate(TAB_NAMES):
-            button = QPushButton(name)
+            button = QPushButton()
+            button.setObjectName("sidebarTab")
+            button.setMinimumHeight(34)
             button.clicked.connect(lambda _checked, i=index: self.content.setCurrentIndex(i))
             sidebar_layout.addWidget(button)
+            self._sidebar_buttons.append(button)
 
         sidebar_layout.addStretch()
+
+        self._theme_button = QPushButton()
+        self._theme_button.setObjectName("sidebarTheme")
+        self._theme_button.setMinimumHeight(34)
+        self._theme_button.clicked.connect(self._toggle_theme)
+        sidebar_layout.addWidget(self._theme_button)
+
+        self._apply_sidebar_state()
+        self._update_theme_button()
 
         root = QWidget()
         root_layout = QHBoxLayout(root)
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(0)
-        root_layout.addWidget(sidebar)
+        root_layout.addWidget(self._sidebar)
         root_layout.addWidget(self.content, stretch=1)
 
         self.setCentralWidget(root)
@@ -92,6 +128,49 @@ class MainWindow(QMainWindow):
         self.devices_tab.view_packets_requested.connect(self._on_view_packets_for_device)
         self.dashboard_tab.view_packets_requested.connect(self._on_view_packets_for_device)
         self.topology_tab.view_packets_requested.connect(self._on_view_packets_for_device)
+
+    def _toggle_sidebar(self) -> None:
+        self._sidebar_expanded = not self._sidebar_expanded
+        self._apply_sidebar_state()
+        self._settings.setValue("sidebar_expanded", self._sidebar_expanded)
+
+    def _apply_sidebar_state(self) -> None:
+        if self._sidebar_expanded:
+            self._sidebar.setFixedWidth(SIDEBAR_WIDTH_EXPANDED)
+            self._hamburger.setText("☰   Menu")
+            self._hamburger.setToolTip("Collapse sidebar")
+            for button, name in zip(self._sidebar_buttons, TAB_NAMES):
+                icon = SIDEBAR_ICONS.get(name, "•")
+                button.setText(f"{icon}   {name}")
+                button.setToolTip(name)
+        else:
+            self._sidebar.setFixedWidth(SIDEBAR_WIDTH_COLLAPSED)
+            self._hamburger.setText("☰")
+            self._hamburger.setToolTip("Expand sidebar")
+            for button, name in zip(self._sidebar_buttons, TAB_NAMES):
+                icon = SIDEBAR_ICONS.get(name, "•")
+                button.setText(icon)
+                button.setToolTip(name)
+        self._update_theme_button()
+
+    def _toggle_theme(self) -> None:
+        self._theme = "light" if self._theme == "dark" else "dark"
+        apply_theme(self._theme)
+        self._settings.setValue("theme", self._theme)
+        self._update_theme_button()
+
+    def _update_theme_button(self) -> None:
+        if self._theme == "dark":
+            icon = "☾"
+            label = "Dark"
+        else:
+            icon = "☀"
+            label = "Light"
+        if self._sidebar_expanded:
+            self._theme_button.setText(f"{icon}   {label}")
+        else:
+            self._theme_button.setText(icon)
+        self._theme_button.setToolTip(f"Theme: {label} (click to toggle)")
 
     def _resolve_pcap_path(self, append: bool) -> tuple[Path, bool]:
         if append:
