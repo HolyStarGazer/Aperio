@@ -6,6 +6,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QSplitter,
     QTableView,
     QVBoxLayout,
     QWidget,
@@ -13,6 +14,7 @@ from PyQt6.QtWidgets import (
 
 from capture.threads import HostnameResolverThread
 from models.packet_table import PacketFilterProxyModel, PacketTableModel
+from ui.packet_detail import PacketDetailView
 
 
 class PacketsTab(QWidget):
@@ -71,10 +73,19 @@ class PacketsTab(QWidget):
         self.view.setColumnWidth(4, 80)
         self.view.setColumnWidth(5, 70)
 
+        self.detail_view = PacketDetailView()
+
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        splitter.addWidget(self.view)
+        splitter.addWidget(self.detail_view)
+        splitter.setSizes([450, 250])
+        splitter.setChildrenCollapsible(False)
+
         self.protocol_filter.textChanged.connect(self.proxy.set_protocol_filter)
         self.ip_filter.textChanged.connect(self.proxy.set_ip_filter)
         self.port_filter.textChanged.connect(self.proxy.set_port_filter)
         self.clear_button.clicked.connect(self._on_clear)
+        self.view.selectionModel().currentChanged.connect(self._on_current_changed)
 
         self.resolver = HostnameResolverThread(self)
         self.resolver.hostname_resolved.connect(self.model.apply_hostname)
@@ -82,11 +93,27 @@ class PacketsTab(QWidget):
 
         layout.addWidget(self.header)
         layout.addLayout(filter_bar)
-        layout.addWidget(self.view)
+        layout.addWidget(splitter)
 
     def _on_clear(self) -> None:
         self.model.clear()
         self.header.setText("Packets — 0 captured")
+        self.detail_view.show_packet(None)
+
+    def _on_current_changed(self, current, previous) -> None:
+        if not current.isValid():
+            self.detail_view.show_packet(None)
+            return
+        source_index = self.proxy.mapToSource(current)
+        if not source_index.isValid():
+            self.detail_view.show_packet(None)
+            return
+        try:
+            packet = self.model.get_packet(source_index.row())
+        except IndexError:
+            self.detail_view.show_packet(None)
+            return
+        self.detail_view.show_packet(packet)
 
     def shutdown(self) -> None:
         self.resolver.stop()

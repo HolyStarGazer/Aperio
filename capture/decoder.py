@@ -11,6 +11,7 @@ def decode_packet(pkt) -> dict:
         "protocol": "Other",
         "info": pkt.summary(),
         "length": len(pkt),
+        "_raw": pkt,
     }
 
     if pkt.haslayer(ARP):
