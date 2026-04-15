@@ -83,6 +83,9 @@ class DeviceRegistryModel(QObject):
         if is_bogus_ip(ip):
             ip = ""
 
+        if mac == "ff:ff:ff:ff:ff:ff":
+            return None
+
         if not ip and not mac:
             return None
 

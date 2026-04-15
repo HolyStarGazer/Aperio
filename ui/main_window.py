@@ -91,6 +91,7 @@ class MainWindow(QMainWindow):
         self.scan_tab.arp_scan_requested.connect(self._on_arp_scan_requested)
         self.devices_tab.view_packets_requested.connect(self._on_view_packets_for_device)
         self.dashboard_tab.view_packets_requested.connect(self._on_view_packets_for_device)
+        self.topology_tab.view_packets_requested.connect(self._on_view_packets_for_device)
 
     def _resolve_pcap_path(self, append: bool) -> tuple[Path, bool]:
         if append:
@@ -170,6 +171,7 @@ class MainWindow(QMainWindow):
         self.scan_tab.set_capturing(False)
         self.scan_tab.set_status("Stopped")
         self.scan_tab.refresh_recent_captures()
+        self.topology_tab.reset_layout()
 
     def _on_capture_finished(self) -> None:
         if self.capture_thread is None:
@@ -178,6 +180,7 @@ class MainWindow(QMainWindow):
         self.scan_tab.set_capturing(False)
         self.scan_tab.set_status("Finished")
         self.scan_tab.refresh_recent_captures()
+        self.topology_tab.reset_layout()
 
     def _on_load_requested(self, path: str) -> None:
         if self.capture_thread is not None or self.loader_thread is not None:
@@ -198,6 +201,7 @@ class MainWindow(QMainWindow):
         self.scan_tab.set_loading(False)
         self.scan_tab.set_status(f"Loaded {count} packets")
         self.scan_tab.refresh_recent_captures()
+        self.topology_tab.reset_layout()
 
     def _on_load_failed(self, error: str) -> None:
         self.loader_thread = None
@@ -223,6 +227,7 @@ class MainWindow(QMainWindow):
         self.arp_scanner = None
         self.scan_tab.set_arp_scanning(False)
         self.scan_tab.set_status(f"ARP scan found {count} devices")
+        self.topology_tab.reset_layout()
 
     def _on_arp_scan_failed(self, error: str) -> None:
         self.arp_scanner = None
