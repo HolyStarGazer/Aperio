@@ -1,45 +1,16 @@
+import math
 import random
 
 from PyQt6.QtCore import QPointF, QRectF, QSize, Qt, QTimer
 from PyQt6.QtGui import QColor, QFont, QPainter, QPen
 from PyQt6.QtWidgets import QWidget
 
+from capture.files import (
+    detect_network_context,
+    is_multicast_or_broadcast,
+    is_private_ip,
+)
 from models.device_registry import Device, DeviceRegistryModel
-
-
-def is_private_ip(ip: str) -> bool:
-    parts = ip.split(".")
-    if len(parts) != 4:
-        return False
-    try:
-        a = int(parts[0])
-        b = int(parts[1])
-    except ValueError:
-        return False
-    if a == 10:
-        return True
-    if a == 172 and 16 <= b <= 31:
-        return True
-    if a == 192 and b == 168:
-        return True
-    if a == 169 and b == 254:
-        return True
-    return False
-
-
-def is_multicast_or_broadcast(ip: str) -> bool:
-    if not ip:
-        return False
-    if ip == "255.255.255.255":
-        return True
-    parts = ip.split(".")
-    if len(parts) != 4:
-        return False
-    try:
-        a = int(parts[0])
-    except ValueError:
-        return False
-    return 224 <= a <= 239
 
 
 COLOR_GATEWAY = QColor(230, 120, 60)
@@ -47,24 +18,6 @@ COLOR_SELF = QColor(150, 110, 220)
 COLOR_LOCAL = QColor(100, 150, 220)
 COLOR_MULTICAST = QColor(100, 180, 100)
 COLOR_EXTERNAL = QColor(180, 180, 180)
-
-
-def detect_network_context() -> tuple[str, str]:
-    try:
-        from scapy.all import conf
-        result = conf.route.route("8.8.8.8")
-        if not result or len(result) < 3:
-            return "", ""
-        _iface, src_ip, gateway_ip = result
-        src_ip = src_ip or ""
-        gateway_ip = gateway_ip or ""
-        if src_ip == "0.0.0.0":
-            src_ip = ""
-        if gateway_ip == "0.0.0.0":
-            gateway_ip = ""
-        return src_ip, gateway_ip
-    except Exception:
-        return "", ""
 
 
 class TopologyCanvas(QWidget):
@@ -76,6 +29,7 @@ class TopologyCanvas(QWidget):
         super().__init__(parent)
         self.registry = registry
         self._positions: dict[str, tuple[float, float]] = {}
+        self._graph_edges: list[tuple[str, str]] = []
         self._rng = random.Random(42)
         self._local_ip, self._gateway_ip = detect_network_context()
 
@@ -104,57 +58,165 @@ class TopologyCanvas(QWidget):
         self._positions.clear()
         self.update()
 
-    def _recompute_layout(self) -> None:
+    def _classify(
+        self,
+        devices: list[Device],
+    ) -> tuple[str | None, str | None, list[str], list[str], list[str]]:
+        gateway_key: str | None = None
+        self_key: str | None = None
+        local_keys: list[str] = []
+        external_keys: list[str] = []
+        multicast_keys: list[str] = []
+
+        for device in devices:
+            ip = device.ip
+            if self._gateway_ip and ip == self._gateway_ip:
+                gateway_key = device.key
+                continue
+            if self._local_ip and ip == self._local_ip:
+                self_key = device.key
+                continue
+            if is_multicast_or_broadcast(ip):
+                multicast_keys.append(device.key)
+                continue
+            if ip and not is_private_ip(ip):
+                external_keys.append(device.key)
+                continue
+            local_keys.append(device.key)
+
+        return gateway_key, self_key, local_keys, external_keys, multicast_keys
+
+    def _build_edges(self, devices: list[Device]) -> list[tuple[str, str]]:
+        gateway, self_key, locals_, externals, _multicasts = self._classify(devices)
+        edges: list[tuple[str, str]] = []
+        if gateway is not None:
+            if self_key is not None and self_key != gateway:
+                edges.append((gateway, self_key))
+            for key in locals_:
+                edges.append((gateway, key))
+            for key in externals:
+                edges.append((gateway, key))
+        else:
+            device_keys = {d.key for d in devices}
+            for a, b in self.registry.all_edges():
+                if a in device_keys and b in device_keys:
+                    edges.append((a, b))
+        return edges
+
+    @staticmethod
+    def _fan_positions(
+        keys: list[str],
+        direction: int,
+        start_radius: float = 0.85,
+        ring_step: float = 0.34,
+        spacing: float = 0.26,
+        angle_start: float = math.pi / 6,
+        angle_end: float = 5 * math.pi / 6,
+    ) -> dict[str, tuple[float, float]]:
+        if not keys:
+            return {}
+        positions: dict[str, tuple[float, float]] = {}
+        remaining = list(keys)
+        radius = start_radius
+        angle_range = angle_end - angle_start
+        while remaining:
+            arc_length = angle_range * radius
+            capacity = max(1, int(arc_length / spacing))
+            ring_keys = remaining[:capacity]
+            remaining = remaining[capacity:]
+            n = len(ring_keys)
+            for i, key in enumerate(ring_keys):
+                if n == 1:
+                    theta = (angle_start + angle_end) / 2
+                else:
+                    theta = angle_start + angle_range * (i + 0.5) / n
+                x = radius * math.cos(theta)
+                y = direction * radius * math.sin(theta)
+                positions[key] = (x, y)
+            radius += ring_step
+        return positions
+
+    def _manual_layout(
+        self,
+        devices: list[Device],
+    ) -> dict[str, tuple[float, float]]:
+        gateway, self_key, locals_, externals, multicasts = self._classify(devices)
+        positions: dict[str, tuple[float, float]] = {}
+
+        if gateway is not None:
+            positions[gateway] = (0.0, 0.0)
+
+        if self_key is not None:
+            positions[self_key] = (0.0, -0.45)
+
+        positions.update(
+            self._fan_positions(
+                locals_,
+                direction=-1,
+                start_radius=0.85,
+                ring_step=0.34,
+                spacing=0.26,
+            )
+        )
+
+        positions.update(
+            self._fan_positions(
+                externals,
+                direction=+1,
+                start_radius=0.85,
+                ring_step=0.34,
+                spacing=0.26,
+            )
+        )
+
+        if multicasts:
+            n = len(multicasts)
+            span = 1.8
+            step = span / max(n - 1, 1) if n > 1 else 0.0
+            y0 = -0.9 if n > 1 else 0.0
+            for i, key in enumerate(multicasts):
+                positions[key] = (-1.55, y0 + step * i)
+
+        return positions
+
+    def _spring_layout_fallback(
+        self,
+        devices: list[Device],
+    ) -> dict[str, tuple[float, float]]:
         try:
             import networkx as nx
         except ImportError:
-            return
-
-        devices = self.registry.all_devices()
-        edges = self.registry.all_edges()
-
-        if not devices:
-            self._positions.clear()
-            self.update()
-            return
+            return {}
 
         graph = nx.Graph()
+        for device in devices:
+            graph.add_node(device.key)
         device_keys = {d.key for d in devices}
-        for key in device_keys:
-            graph.add_node(key)
-        for a, b in edges:
+        for a, b in self.registry.all_edges():
             if a in device_keys and b in device_keys:
                 graph.add_edge(a, b)
 
-        if self._positions:
-            cx = sum(p[0] for p in self._positions.values()) / len(self._positions)
-            cy = sum(p[1] for p in self._positions.values()) / len(self._positions)
-        else:
-            cx = cy = 0.0
-
-        initial_pos: dict[str, tuple[float, float]] = {}
-        for key in device_keys:
-            if key in self._positions:
-                initial_pos[key] = self._positions[key]
-            else:
-                initial_pos[key] = (
-                    cx + self._rng.uniform(-0.3, 0.3),
-                    cy + self._rng.uniform(-0.3, 0.3),
-                )
-
         try:
-            new_pos = nx.spring_layout(
-                graph,
-                pos=initial_pos,
-                seed=42,
-                iterations=30,
-            )
+            new_pos = nx.spring_layout(graph, seed=42, iterations=50)
         except Exception:
+            return {}
+        return {k: (float(v[0]), float(v[1])) for k, v in new_pos.items()}
+
+    def _recompute_layout(self) -> None:
+        devices = self.registry.all_devices()
+        if not devices:
+            self._positions.clear()
+            self._graph_edges = []
+            self.update()
             return
 
-        self._positions = {
-            k: (float(v[0]), float(v[1])) for k, v in new_pos.items()
-        }
+        self._graph_edges = self._build_edges(devices)
+
+        if self._gateway_ip:
+            self._positions = self._manual_layout(devices)
+        else:
+            self._positions = self._spring_layout_fallback(devices)
+
         self.update()
 
     def paintEvent(self, event) -> None:
@@ -169,7 +231,6 @@ class TopologyCanvas(QWidget):
             return
 
         devices_by_key = {d.key: d for d in self.registry.all_devices()}
-        edges = self.registry.all_edges()
 
         gateway_key = None
         self_key = None
@@ -183,9 +244,11 @@ class TopologyCanvas(QWidget):
         if not screen_pos:
             return
 
-        edge_pen = QPen(QColor(140, 140, 140, 160), 1.5)
+        labels = self._compute_labels(devices_by_key)
+
+        edge_pen = QPen(QColor(140, 140, 140, 110), 1.2)
         painter.setPen(edge_pen)
-        for a, b in edges:
+        for a, b in self._graph_edges:
             pa = screen_pos.get(a)
             pb = screen_pos.get(b)
             if pa is not None and pb is not None:
@@ -203,9 +266,33 @@ class TopologyCanvas(QWidget):
                 painter,
                 pos,
                 device,
+                labels.get(key, ""),
                 is_gateway=(key == gateway_key),
                 is_self=(key == self_key),
             )
+
+    @staticmethod
+    def _compute_labels(devices_by_key: dict[str, Device]) -> dict[str, str]:
+        prelim: dict[str, str] = {}
+        for key, device in devices_by_key.items():
+            prelim[key] = device.hostname or device.ip or device.mac or key
+
+        counts: dict[str, int] = {}
+        for label in prelim.values():
+            counts[label] = counts.get(label, 0) + 1
+
+        final: dict[str, str] = {}
+        for key, device in devices_by_key.items():
+            label = prelim[key]
+            if counts[label] > 1:
+                if device.ip:
+                    label = f"{label} ({device.ip})"
+                elif device.mac:
+                    label = f"{label} [{device.mac[-8:]}]"
+            if len(label) > 30:
+                label = label[:29] + "…"
+            final[key] = label
+        return final
 
     def _to_screen_coords(self) -> dict[str, QPointF]:
         if not self._positions:
@@ -235,6 +322,7 @@ class TopologyCanvas(QWidget):
         painter: QPainter,
         pos: QPointF,
         device: Device,
+        label: str,
         is_gateway: bool,
         is_self: bool,
     ) -> None:
@@ -243,14 +331,10 @@ class TopologyCanvas(QWidget):
         painter.setPen(QPen(QColor(30, 30, 30), 1.5))
         painter.drawEllipse(pos, self.NODE_RADIUS, self.NODE_RADIUS)
 
-        label = device.hostname or device.ip or device.mac or device.key
-        if len(label) > 26:
-            label = label[:25] + "…"
-
         label_rect = QRectF(
-            pos.x() - 120,
+            pos.x() - 140,
             pos.y() + self.NODE_RADIUS + 4,
-            240,
+            280,
             self.LABEL_HEIGHT,
         )
         painter.setPen(self.palette().text().color())

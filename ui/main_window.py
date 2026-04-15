@@ -13,7 +13,8 @@ from PyQt6.QtWidgets import (
 
 from capture.decoder import summarize_filter
 from capture.files import find_latest_capture, new_capture_path
-from capture.threads import CaptureThread, PcapLoaderThread
+from capture.hostname_cache import HostnameCache
+from capture.threads import ArpScannerThread, CaptureThread, PcapLoaderThread
 from models.device_registry import DeviceRegistryModel
 from ui.devices_tab import DevicesTab
 from ui.packets_tab import PacketsTab
@@ -30,17 +31,17 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Aperio")
         self.resize(1100, 700)
 
-        self.device_registry = DeviceRegistryModel(self)
-        self.packets_tab = PacketsTab()
+        self.hostname_cache = HostnameCache()
+        self.device_registry = DeviceRegistryModel(self.hostname_cache, self)
+        self.packets_tab = PacketsTab(self.hostname_cache)
         self.devices_tab = DevicesTab(self.device_registry)
         self.topology_tab = TopologyTab(self.device_registry)
         self.scan_tab = ScanTab()
         self.capture_thread: CaptureThread | None = None
         self.loader_thread: PcapLoaderThread | None = None
+        self.arp_scanner: ArpScannerThread | None = None
 
-        self.packets_tab.resolver.hostname_resolved.connect(
-            self.device_registry.apply_hostname
-        )
+        self.packets_tab.resolver.hostname_resolved.connect(self._on_hostname_resolved)
 
         self.content = QStackedWidget()
         for name in TAB_NAMES:
@@ -83,6 +84,7 @@ class MainWindow(QMainWindow):
         self.scan_tab.start_scan_requested.connect(self._start_scan)
         self.scan_tab.stop_requested.connect(self._stop_capture)
         self.scan_tab.load_requested.connect(self._on_load_requested)
+        self.scan_tab.arp_scan_requested.connect(self._on_arp_scan_requested)
         self.devices_tab.view_packets_requested.connect(self._on_view_packets_for_device)
 
     def _resolve_pcap_path(self, append: bool) -> tuple[Path, bool]:
@@ -94,6 +96,11 @@ class MainWindow(QMainWindow):
 
     def _switch_to_packets_tab(self) -> None:
         self.content.setCurrentIndex(TAB_NAMES.index("Packets"))
+
+    def _on_hostname_resolved(self, ip: str, hostname: str) -> None:
+        self.hostname_cache.apply(ip, hostname)
+        self.packets_tab.model.apply_hostname(ip, hostname)
+        self.device_registry.apply_hostname(ip, hostname)
 
     def _on_view_packets_for_device(self, ip: str) -> None:
         self.packets_tab.set_ip_filter(ip)
@@ -192,10 +199,38 @@ class MainWindow(QMainWindow):
         self.scan_tab.set_loading(False)
         self.scan_tab.set_status(f"Load failed: {error}")
 
+    def _on_arp_scan_requested(self, iface: str, subnet: str) -> None:
+        if (
+            self.capture_thread is not None
+            or self.loader_thread is not None
+            or self.arp_scanner is not None
+        ):
+            return
+        self.arp_scanner = ArpScannerThread(iface, subnet, self)
+        self.arp_scanner.device_discovered.connect(self.device_registry.observe)
+        self.arp_scanner.scan_complete.connect(self._on_arp_scan_complete)
+        self.arp_scanner.scan_failed.connect(self._on_arp_scan_failed)
+        self.arp_scanner.start()
+        self.scan_tab.set_arp_scanning(True)
+        self.scan_tab.set_status(f"ARP scanning {subnet}…")
+
+    def _on_arp_scan_complete(self, count: int) -> None:
+        self.arp_scanner = None
+        self.scan_tab.set_arp_scanning(False)
+        self.scan_tab.set_status(f"ARP scan found {count} devices")
+
+    def _on_arp_scan_failed(self, error: str) -> None:
+        self.arp_scanner = None
+        self.scan_tab.set_arp_scanning(False)
+        self.scan_tab.set_status(f"ARP scan failed: {error}")
+
     def closeEvent(self, event):
         if self.capture_thread is not None:
             self.capture_thread.stop()
         if self.loader_thread is not None:
             self.loader_thread.wait()
+        if self.arp_scanner is not None:
+            self.arp_scanner.wait()
         self.packets_tab.shutdown()
+        self.hostname_cache.save()
         super().closeEvent(event)

@@ -85,6 +85,10 @@ class PacketTableModel(QAbstractTableModel):
     def get_packet(self, row: int) -> dict:
         return self._packets[row]
 
+    def populate_hostname_cache(self, entries: dict[str, str]) -> None:
+        for ip, hostname in entries.items():
+            self._hostname_cache[ip] = hostname
+
     def mark_pending_hostname(self, ip: str) -> bool:
         if not ip or ip in self._hostname_cache:
             return False

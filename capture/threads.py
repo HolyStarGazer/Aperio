@@ -1,9 +1,10 @@
 import queue
 import socket
+import time
 from pathlib import Path
 
 from PyQt6.QtCore import QThread, pyqtSignal
-from scapy.all import AsyncSniffer, PcapReader, PcapWriter
+from scapy.all import ARP, AsyncSniffer, Ether, PcapReader, PcapWriter, srp
 
 from capture.decoder import decode_packet, packet_matches_filter
 from capture.files import CAPTURES_DIR, RECENT_CAPTURES_LIMIT
@@ -129,11 +130,61 @@ class RecentCapturesScanner(QThread):
         self.scan_complete.emit(results)
 
 
+class ArpScannerThread(QThread):
+    device_discovered = pyqtSignal(dict)
+    scan_complete = pyqtSignal(int)
+    scan_failed = pyqtSignal(str)
+
+    def __init__(self, iface: str, subnet: str, parent=None):
+        super().__init__(parent)
+        self._iface = iface
+        self._subnet = subnet
+
+    def run(self) -> None:
+        try:
+            request = Ether(dst="ff:ff:ff:ff:ff:ff") / ARP(pdst=self._subnet)
+            answered, _unanswered = srp(
+                request,
+                iface=self._iface,
+                timeout=2,
+                verbose=False,
+            )
+        except Exception as e:
+            self.scan_failed.emit(str(e))
+            return
+
+        count = 0
+        for _sent, received in answered:
+            try:
+                src_ip = str(received.psrc)
+                src_mac = str(received.hwsrc)
+            except Exception:
+                continue
+            synthetic = {
+                "timestamp": float(time.time()),
+                "src_ip": src_ip,
+                "dst_ip": "",
+                "src_port": None,
+                "dst_port": None,
+                "src_mac": src_mac,
+                "dst_mac": "",
+                "protocol": "ARP",
+                "info": f"ARP scan reply from {src_ip}",
+                "length": len(received),
+                "_raw": received,
+            }
+            self.device_discovered.emit(synthetic)
+            count += 1
+
+        self.scan_complete.emit(count)
+
+
 class HostnameResolverThread(QThread):
     hostname_resolved = pyqtSignal(str, str)
 
-    def __init__(self, parent=None):
+    def __init__(self, hostname_cache, parent=None):
         super().__init__(parent)
+        self._cache = hostname_cache
         self._queue: queue.Queue = queue.Queue()
         self._running = True
 
@@ -148,6 +199,12 @@ class HostnameResolverThread(QThread):
                 continue
             if ip is None:
                 break
+
+            cached = self._cache.get(ip)
+            if cached is not None:
+                self.hostname_resolved.emit(ip, cached)
+                continue
+
             try:
                 hostname, _, _ = socket.gethostbyaddr(ip)
             except (socket.herror, socket.gaierror, OSError):

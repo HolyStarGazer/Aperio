@@ -12,14 +12,16 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from capture.hostname_cache import HostnameCache
 from capture.threads import HostnameResolverThread
 from models.packet_table import PacketFilterProxyModel, PacketTableModel
 from ui.packet_detail import PacketDetailView
 
 
 class PacketsTab(QWidget):
-    def __init__(self, parent=None):
+    def __init__(self, hostname_cache: HostnameCache, parent=None):
         super().__init__(parent)
+        self.hostname_cache = hostname_cache
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
@@ -52,6 +54,7 @@ class PacketsTab(QWidget):
         filter_bar.addWidget(self.clear_button)
 
         self.model = PacketTableModel()
+        self.model.populate_hostname_cache(self.hostname_cache.all_entries())
         self.proxy = PacketFilterProxyModel()
         self.proxy.setSourceModel(self.model)
 
@@ -87,8 +90,7 @@ class PacketsTab(QWidget):
         self.clear_button.clicked.connect(self._on_clear)
         self.view.selectionModel().currentChanged.connect(self._on_current_changed)
 
-        self.resolver = HostnameResolverThread(self)
-        self.resolver.hostname_resolved.connect(self.model.apply_hostname)
+        self.resolver = HostnameResolverThread(self.hostname_cache, self)
         self.resolver.start()
 
         layout.addWidget(self.header)

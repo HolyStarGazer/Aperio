@@ -17,7 +17,13 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from capture.files import CAPTURES_DIR, DEFAULT_INTERFACE, list_interfaces
+from capture.files import (
+    CAPTURES_DIR,
+    DEFAULT_INTERFACE,
+    default_subnet,
+    detect_network_context,
+    list_interfaces,
+)
 from capture.threads import RecentCapturesScanner
 
 
@@ -71,13 +77,18 @@ class ScanTab(QWidget):
     start_scan_requested = pyqtSignal(str, int, bool, dict)
     stop_requested = pyqtSignal()
     load_requested = pyqtSignal(str)
+    arp_scan_requested = pyqtSignal(str, str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
 
         self._capturing = False
         self._loading = False
+        self._arp_scanning = False
         self._scanner_thread: RecentCapturesScanner | None = None
+
+        local_ip, gateway_ip = detect_network_context()
+        self._subnet = default_subnet(local_ip, gateway_ip)
 
         outer_layout = QVBoxLayout(self)
         outer_layout.setContentsMargins(0, 0, 0, 0)
@@ -172,6 +183,23 @@ class ScanTab(QWidget):
         load_row.addWidget(self.load_button)
         load_row.addStretch()
 
+        discovery_title = QLabel("Discovery")
+        discovery_title.setFont(self._section_font())
+
+        self.arp_scan_button = QPushButton("ARP Scan Subnet")
+        self.arp_scan_button.setMinimumWidth(200)
+        if not self._subnet:
+            self.arp_scan_button.setEnabled(False)
+
+        subnet_hint = self._subnet or "(subnet not detected)"
+        self.subnet_label = QLabel(f"will scan {subnet_hint}")
+        self.subnet_label.setStyleSheet("color: gray;")
+
+        arp_row = QHBoxLayout()
+        arp_row.addWidget(self.arp_scan_button)
+        arp_row.addWidget(self.subnet_label)
+        arp_row.addStretch()
+
         recent_title = QLabel("Recent captures")
         recent_title.setFont(self._section_font())
 
@@ -198,6 +226,9 @@ class ScanTab(QWidget):
         layout.addWidget(file_title)
         layout.addLayout(load_row)
         layout.addSpacing(8)
+        layout.addWidget(discovery_title)
+        layout.addLayout(arp_row)
+        layout.addSpacing(8)
         layout.addWidget(recent_title)
         layout.addWidget(self.recent_container)
         layout.addWidget(self.status_label)
@@ -210,8 +241,14 @@ class ScanTab(QWidget):
         self.scan_button.clicked.connect(self._on_scan_clicked)
         self.stop_button.clicked.connect(self.stop_requested.emit)
         self.load_button.clicked.connect(self._on_load_clicked)
+        self.arp_scan_button.clicked.connect(self._on_arp_scan_clicked)
 
         self.refresh_recent_captures()
+
+    def _on_arp_scan_clicked(self) -> None:
+        if not self._subnet:
+            return
+        self.arp_scan_requested.emit(self.iface_combo.currentText(), self._subnet)
 
     def _section_font(self):
         font = self.font()
@@ -268,8 +305,12 @@ class ScanTab(QWidget):
         self._loading = loading
         self._update_enabled()
 
+    def set_arp_scanning(self, scanning: bool) -> None:
+        self._arp_scanning = scanning
+        self._update_enabled()
+
     def _update_enabled(self) -> None:
-        active = self._capturing or self._loading
+        active = self._capturing or self._loading or self._arp_scanning
         self.live_button.setEnabled(not active)
         self.scan_button.setEnabled(not active)
         self.count_spin.setEnabled(not active)
@@ -280,6 +321,7 @@ class ScanTab(QWidget):
         self.port_input.setEnabled(not active)
         self.protocol_input.setEnabled(not active)
         self.load_button.setEnabled(not active)
+        self.arp_scan_button.setEnabled(not active and bool(self._subnet))
         self.stop_button.setEnabled(self._capturing)
 
     def set_status(self, text: str) -> None:

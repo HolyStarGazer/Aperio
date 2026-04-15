@@ -2,6 +2,12 @@ from dataclasses import dataclass, field
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
+from capture.files import (
+    is_bogus_ip,
+    is_multicast_mac,
+    is_multicast_or_broadcast,
+    is_private_ip,
+)
 from capture.oui_lookup import lookup_vendor
 
 
@@ -24,10 +30,11 @@ class DeviceRegistryModel(QObject):
     devices_cleared = pyqtSignal()
     topology_structure_changed = pyqtSignal()
 
-    def __init__(self, parent=None):
+    def __init__(self, hostname_cache=None, parent=None):
         super().__init__(parent)
         self._devices: dict[str, Device] = {}
         self._edges: set[tuple[str, str]] = set()
+        self._hostname_cache = hostname_cache
 
     def observe(self, packet: dict) -> None:
         timestamp = packet.get("timestamp", 0.0)
@@ -73,19 +80,40 @@ class DeviceRegistryModel(QObject):
         timestamp: float,
         length: int,
     ) -> tuple[str, bool] | None:
+        if is_bogus_ip(ip):
+            ip = ""
+
         if not ip and not mac:
             return None
 
-        key = mac if mac else ip
+        if not ip and mac and is_multicast_mac(mac):
+            return None
+
+        if ip and is_multicast_or_broadcast(ip):
+            key = ip
+            effective_mac = ""
+        elif ip and not is_private_ip(ip):
+            key = ip
+            effective_mac = ""
+        else:
+            key = mac if mac else ip
+            effective_mac = mac
+
         device = self._devices.get(key)
         is_new = device is None
 
         if is_new:
+            initial_hostname = ""
+            if self._hostname_cache is not None and ip:
+                cached = self._hostname_cache.get(ip)
+                if cached and cached != ip:
+                    initial_hostname = cached
             device = Device(
                 key=key,
                 ip=ip,
-                mac=mac,
-                vendor=lookup_vendor(mac) if mac else "",
+                mac=effective_mac,
+                hostname=initial_hostname,
+                vendor=lookup_vendor(effective_mac) if effective_mac else "",
                 first_seen=timestamp,
                 last_seen=timestamp,
                 packet_count=1,
@@ -102,9 +130,9 @@ class DeviceRegistryModel(QObject):
                 device.ports.add(port)
             if not device.ip and ip:
                 device.ip = ip
-            if not device.mac and mac:
-                device.mac = mac
-                device.vendor = lookup_vendor(mac)
+            if not device.mac and effective_mac:
+                device.mac = effective_mac
+                device.vendor = lookup_vendor(effective_mac)
 
         self.device_changed.emit(key)
         return key, is_new
