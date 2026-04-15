@@ -30,6 +30,7 @@ Thumbs.db
 desktop.ini
 
 # Project-specific
+data/
 *.pcap
 *.pcapng
 captures/
