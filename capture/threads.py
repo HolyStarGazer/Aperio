@@ -78,7 +78,10 @@ class CaptureThread(QThread):
 
 
 class PcapLoaderThread(QThread):
-    packet_loaded = pyqtSignal(dict)
+    BATCH_SIZE = 250
+
+    packets_batch_loaded = pyqtSignal(list)
+    load_progress = pyqtSignal(int)
     load_finished = pyqtSignal(int)
     load_failed = pyqtSignal(str)
 
@@ -88,15 +91,25 @@ class PcapLoaderThread(QThread):
 
     def run(self):
         count = 0
+        batch: list[dict] = []
         try:
             with PcapReader(str(self._path)) as reader:
                 for pkt in reader:
                     decoded = decode_packet(pkt)
-                    self.packet_loaded.emit(decoded)
+                    batch.append(decoded)
                     count += 1
+                    if len(batch) >= self.BATCH_SIZE:
+                        self.packets_batch_loaded.emit(batch)
+                        self.load_progress.emit(count)
+                        batch = []
         except Exception as e:
+            if batch:
+                self.packets_batch_loaded.emit(batch)
             self.load_failed.emit(str(e))
             return
+        if batch:
+            self.packets_batch_loaded.emit(batch)
+        self.load_progress.emit(count)
         self.load_finished.emit(count)
 
 
@@ -221,9 +234,24 @@ class HostnameResolverThread(QThread):
         self._cache = hostname_cache
         self._queue: queue.Queue = queue.Queue()
         self._running = True
+        self._ever_seen: set[str] = set()
+        self._ever_resolved: set[str] = set()
+
+    def stats(self) -> tuple[int, int]:
+        return len(self._ever_seen), len(self._ever_resolved)
+
+    def record_passive(self, ip: str, hostname: str) -> None:
+        if not ip:
+            return
+        self._ever_seen.add(ip)
+        if hostname and hostname != ip:
+            self._ever_resolved.add(ip)
 
     def enqueue(self, ip: str) -> None:
         self._queue.put(ip)
+
+    def pending_count(self) -> int:
+        return self._queue.qsize()
 
     def run(self) -> None:
         while self._running:
@@ -255,6 +283,11 @@ class HostnameResolverThread(QThread):
             if not hostname:
                 hostname = ip
 
+            self._ever_seen.add(ip)
+            if hostname and hostname != ip:
+                self._ever_resolved.add(ip)
+            else:
+                self._ever_resolved.discard(ip)
             self.hostname_resolved.emit(ip, hostname)
 
     def stop(self) -> None:

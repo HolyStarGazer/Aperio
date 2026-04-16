@@ -158,3 +158,23 @@ class PacketsTab(QWidget):
 
         if at_bottom and default_order:
             self.view.scrollToBottom()
+
+    def on_packets_batch(self, packets: list) -> None:
+        if not packets:
+            return
+        scrollbar = self.view.verticalScrollBar()
+        at_bottom = scrollbar.value() >= scrollbar.maximum() - 2
+        default_order = self._is_default_order()
+
+        self.model.append_packets_batch(
+            packets, allow_eviction=at_bottom and default_order
+        )
+        self.header.setText(f"Packets — {self.model.total_captured} captured")
+
+        for packet in packets:
+            for ip in (packet["src_ip"], packet["dst_ip"]):
+                if self.model.mark_pending_hostname(ip):
+                    self.resolver.enqueue(ip)
+
+        if at_bottom and default_order:
+            self.view.scrollToBottom()

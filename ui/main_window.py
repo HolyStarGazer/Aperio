@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from PyQt6.QtCore import QSettings, Qt
+from PyQt6.QtCore import QSettings, Qt, QTimer
 from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -68,6 +68,11 @@ class MainWindow(QMainWindow):
         self._hostname_pending: set[str] = set()
         self._hostname_total: int = 0
         self._hostname_success: int = 0
+
+        self._hostname_activity_timer = QTimer(self)
+        self._hostname_activity_timer.setInterval(500)
+        self._hostname_activity_timer.timeout.connect(self._poll_hostname_activity)
+        self._hostname_activity_timer.start()
 
         self.packets_tab.resolver.hostname_resolved.connect(self._on_hostname_resolved)
 
@@ -194,6 +199,34 @@ class MainWindow(QMainWindow):
     def _switch_to_packets_tab(self) -> None:
         self.content.setCurrentIndex(TAB_NAMES.index("Packets"))
 
+    def _poll_hostname_activity(self) -> None:
+        resolver = self.packets_tab.resolver
+        pending = resolver.pending_count()
+        processed, resolved = resolver.stats()
+        self.scan_tab.set_hostname_activity(pending, processed, resolved)
+
+    def _apply_passive_hostname(self, ip: str, hostname: str) -> None:
+        if not ip or not hostname or hostname == ip:
+            return
+        current = self.hostname_cache.get(ip)
+        if current and current != ip and current == hostname:
+            return
+        self.hostname_cache.apply(ip, hostname)
+        self.packets_tab.model.apply_hostname(ip, hostname)
+        self.device_registry.apply_hostname(ip, hostname)
+        self.packets_tab.resolver.record_passive(ip, hostname)
+
+    def _process_hostname_hints(self, packet: dict) -> None:
+        hints = packet.get("hostname_hints") or []
+        for ip, hostname in hints:
+            self._apply_passive_hostname(ip, hostname)
+
+    def _process_hostname_hints_batch(self, packets: list) -> None:
+        for packet in packets:
+            hints = packet.get("hostname_hints") or []
+            for ip, hostname in hints:
+                self._apply_passive_hostname(ip, hostname)
+
     def _on_hostname_resolved(self, ip: str, hostname: str) -> None:
         self.hostname_cache.apply(ip, hostname)
         self.packets_tab.model.apply_hostname(ip, hostname)
@@ -236,16 +269,16 @@ class MainWindow(QMainWindow):
         self._start_hostname_batch(removed)
 
     def _on_clear_hostnames(self) -> None:
-        from capture.files import is_private_ip
-
         removed = self.hostname_cache.clear()
         self.device_registry.reset_hostnames()
-        targets = [
-            d.ip for d in self.device_registry.all_devices()
-            if d.ip and is_private_ip(d.ip)
-        ]
+        seen: set[str] = set()
+        targets: list[str] = []
+        for d in self.device_registry.all_devices():
+            if d.ip and d.ip not in seen:
+                seen.add(d.ip)
+                targets.append(d.ip)
         self.scan_tab.set_status(
-            f"Cleared {len(removed)} cache entries, re-resolving {len(targets)} local host(s)…"
+            f"Cleared {len(removed)} cache entries, re-resolving {len(targets)} host(s)…"
         )
         if targets:
             self._start_hostname_batch(targets)
@@ -300,6 +333,7 @@ class MainWindow(QMainWindow):
         )
         self.capture_thread.packet_captured.connect(self.packets_tab.on_packet_received)
         self.capture_thread.packet_captured.connect(self.devices_tab.on_packet_received)
+        self.capture_thread.packet_captured.connect(self._process_hostname_hints)
         self.capture_thread.capture_finished.connect(self._on_capture_finished)
         self.capture_thread.start()
         self.scan_tab.set_capturing(True)
@@ -329,14 +363,15 @@ class MainWindow(QMainWindow):
             return
         file_path = Path(path)
         self.loader_thread = PcapLoaderThread(file_path, self)
-        self.loader_thread.packet_loaded.connect(self.packets_tab.on_packet_received)
-        self.loader_thread.packet_loaded.connect(self.devices_tab.on_packet_received)
+        self.loader_thread.packets_batch_loaded.connect(self.packets_tab.on_packets_batch)
+        self.loader_thread.packets_batch_loaded.connect(self.devices_tab.on_packets_batch)
+        self.loader_thread.packets_batch_loaded.connect(self._process_hostname_hints_batch)
+        self.loader_thread.load_progress.connect(self.scan_tab.set_load_progress)
         self.loader_thread.load_finished.connect(self._on_load_finished)
         self.loader_thread.load_failed.connect(self._on_load_failed)
         self.loader_thread.start()
         self.scan_tab.set_loading(True)
         self.scan_tab.set_status(f"Loading {file_path.name}…")
-        self._switch_to_packets_tab()
 
     def _on_load_finished(self, count: int) -> None:
         self.loader_thread = None
@@ -344,6 +379,7 @@ class MainWindow(QMainWindow):
         self.scan_tab.set_status(f"Loaded {count} packets")
         self.scan_tab.refresh_recent_captures()
         self.topology_tab.reset_layout()
+        self._switch_to_packets_tab()
 
     def _on_load_failed(self, error: str) -> None:
         self.loader_thread = None

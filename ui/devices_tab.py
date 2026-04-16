@@ -67,6 +67,10 @@ class DevicesTab(QWidget):
     def on_packet_received(self, packet: dict) -> None:
         self.registry.observe(packet)
 
+    def on_packets_batch(self, packets: list) -> None:
+        for packet in packets:
+            self.registry.observe(packet)
+
     def _on_device_changed(self, key: str) -> None:
         device = self.registry.get_device(key)
         if device is None:

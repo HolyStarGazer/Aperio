@@ -91,6 +91,33 @@ class PacketTableModel(QAbstractTableModel):
         self._packets.append(packet)
         self.endInsertRows()
 
+    def append_packets_batch(
+        self, packets: list[dict], allow_eviction: bool = True
+    ) -> None:
+        if not packets:
+            return
+
+        for packet in packets:
+            self._next_number += 1
+            packet["number"] = self._next_number
+
+        if allow_eviction and len(self._packets) + len(packets) > MAX_PACKETS:
+            excess = len(self._packets) + len(packets) - MAX_PACKETS
+            if excess > 0:
+                remove_count = min(excess, len(self._packets))
+                if remove_count > 0:
+                    self.beginRemoveRows(QModelIndex(), 0, remove_count - 1)
+                    del self._packets[:remove_count]
+                    self.endRemoveRows()
+                if len(packets) > MAX_PACKETS:
+                    packets = packets[-MAX_PACKETS:]
+
+        start = len(self._packets)
+        end = start + len(packets) - 1
+        self.beginInsertRows(QModelIndex(), start, end)
+        self._packets.extend(packets)
+        self.endInsertRows()
+
     def clear(self) -> None:
         self.beginResetModel()
         self._packets.clear()

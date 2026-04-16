@@ -1,5 +1,6 @@
 from scapy.all import ARP, ICMP, IP, TCP, UDP, Ether
 
+from capture.passive_hostnames import extract_hostname_hints
 from capture.services import format_port
 
 
@@ -16,8 +17,14 @@ def decode_packet(pkt) -> dict:
         "info": pkt.summary(),
         "length": len(pkt),
         "ttl": None,
+        "hostname_hints": [],
         "_raw": pkt,
     }
+
+    try:
+        result["hostname_hints"] = extract_hostname_hints(pkt)
+    except Exception:
+        result["hostname_hints"] = []
 
     if pkt.haslayer(Ether):
         eth = pkt[Ether]

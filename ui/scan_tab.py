@@ -182,8 +182,21 @@ class ScanTab(QWidget):
         self.load_button = QPushButton("Load Capture File…")
         self.load_button.setMinimumWidth(200)
 
+        self.load_progress = QProgressBar()
+        self.load_progress.setMinimumWidth(180)
+        self.load_progress.setMaximumWidth(220)
+        self.load_progress.setTextVisible(False)
+        self.load_progress.setRange(0, 0)
+        self.load_progress.setVisible(False)
+
+        self.load_progress_label = QLabel("")
+        self.load_progress_label.setStyleSheet("color: gray;")
+        self.load_progress_label.setVisible(False)
+
         load_row = QHBoxLayout()
         load_row.addWidget(self.load_button)
+        load_row.addWidget(self.load_progress)
+        load_row.addWidget(self.load_progress_label)
         load_row.addStretch()
 
         discovery_title = QLabel("Discovery")
@@ -220,7 +233,7 @@ class ScanTab(QWidget):
         self.hostname_progress.setMinimumWidth(220)
         self.hostname_progress.setMaximumWidth(280)
         self.hostname_progress.setTextVisible(True)
-        self.hostname_progress.setFormat("%v / %m resolved")
+        self.hostname_progress.setFormat("%v / %m queried")
         self.hostname_progress.setVisible(False)
 
         hostnames_row = QHBoxLayout()
@@ -240,6 +253,10 @@ class ScanTab(QWidget):
         self._recent_placeholder = QLabel("(scanning…)")
         self._recent_placeholder.setStyleSheet("color: gray;")
         self.recent_layout.addWidget(self._recent_placeholder)
+
+        self.hostname_activity_label = QLabel("")
+        self.hostname_activity_label.setStyleSheet("color: gray;")
+        self.hostname_activity_label.setVisible(False)
 
         self.status_label = QLabel("Status: Idle")
         status_font = self.status_label.font()
@@ -267,6 +284,7 @@ class ScanTab(QWidget):
         layout.addWidget(discovery_title)
         layout.addLayout(arp_row)
         layout.addLayout(hostnames_row)
+        layout.addWidget(self.hostname_activity_label)
         layout.addSpacing(12)
         layout.addWidget(self.status_label)
         layout.addSpacing(12)
@@ -345,7 +363,18 @@ class ScanTab(QWidget):
 
     def set_loading(self, loading: bool) -> None:
         self._loading = loading
+        if loading:
+            self.load_progress.setRange(0, 0)
+            self.load_progress.setVisible(True)
+            self.load_progress_label.setText("0 packets loaded")
+            self.load_progress_label.setVisible(True)
+        else:
+            self.load_progress.setVisible(False)
+            self.load_progress_label.setVisible(False)
         self._update_enabled()
+
+    def set_load_progress(self, count: int) -> None:
+        self.load_progress_label.setText(f"{count} packets loaded")
 
     def set_arp_scanning(self, scanning: bool) -> None:
         self._arp_scanning = scanning
@@ -382,6 +411,20 @@ class ScanTab(QWidget):
             return
         self.hostname_progress.setMaximum(total)
         self.hostname_progress.setValue(done)
+
+    def set_hostname_activity(self, pending: int, seen: int, resolved: int) -> None:
+        if pending <= 0 and seen == 0:
+            self.hostname_activity_label.setVisible(False)
+            return
+        if pending > 0:
+            text = (
+                f"Resolving hostnames… {pending} pending  ·  "
+                f"{resolved}/{seen} devices named"
+            )
+        else:
+            text = f"Hostnames idle  ·  {resolved}/{seen} devices named"
+        self.hostname_activity_label.setText(text)
+        self.hostname_activity_label.setVisible(True)
 
     def _update_enabled(self) -> None:
         active = self._capturing or self._loading or self._arp_scanning
